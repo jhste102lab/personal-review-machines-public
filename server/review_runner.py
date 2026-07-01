@@ -403,6 +403,9 @@ def _build_chatgpt_prompt(
         f"PR 번호: #{pr_number}",
         f"레포 : {repo}",
         "일반 PR comment가 아니라 Files changed의 변경 라인에 inline review comment로 직접 남겨",
+        "지적 내용은 review body에 쓰지 말고, 각 지적을 변경 라인별 inline comment로 나눠서 남겨.",
+        "review body에는 모델명만 남겨.",
+        f"마지막 inline comment의 마지막 줄에 이 숨김 완료표시를 그대로 넣어: {marker}",
         "",
     ]
     if instruction not in {"코드리뷰", "코드 리뷰"}:
