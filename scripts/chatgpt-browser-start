@@ -15,6 +15,8 @@ CACHE_DIR="${PRM_CACHE_DIR:-$USER_HOME/.cache/personal-review-machines-chatgpt}"
 PROFILE_DIR="${PRM_BROWSER_PROFILE_DIR:-$BROWSER_AGENT_HOME/browser-profile}"
 CHATGPT_URL="${PRM_CHATGPT_URL:-https://chatgpt.com/}"
 
+export DISPLAY="${DISPLAY_NUM}"
+
 mkdir -p "$CACHE_DIR" "$PROFILE_DIR"
 
 for required in Xvfb x11vnc websockify curl; do
