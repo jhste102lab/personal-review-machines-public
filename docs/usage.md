@@ -58,7 +58,8 @@ PR 열기
   다시 `queued`로 돌려 재개하고, marker가 이미 PR에 있으면 중복 리뷰 없이 완료 처리합니다.
 - reviewer 실행 실패나 일시적 네트워크 문제로 marker가 게시되지 않으면
   `job_max_attempts` 횟수까지 재시도한 뒤 마지막 실패에서만 failure comment를 올립니다.
-- marker 포함 댓글/리뷰가 실제 PR에 게시되어야 성공입니다.
+- marker 포함 inline review comment 또는 PR review body가 실제 PR에 게시되어야
+  성공입니다. 일반 PR 대화 댓글은 성공 marker로 인정하지 않습니다.
 - ChatGPT reviewer를 쓰는 경우 운영 서버의 ChatGPT 브라우저 프로필이 이미 로그인되어 있어야 합니다.
 
 ## Legacy private repo mention review

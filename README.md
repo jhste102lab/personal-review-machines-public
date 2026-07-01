@@ -18,7 +18,7 @@ PR 댓글 생성
 -> @오픈코드 / @지피티높음 / @지피티매우높음 / @지피티확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
 -> gh로 PR context/diff/최근 댓글/리뷰 수집
 -> 로컬 opencode/agbrowse(ChatGPT)/claude/claude-p/codex 실행
--> marker 포함 PR comment가 실제 게시됐는지 확인
+-> marker 포함 inline review comment 또는 PR review body가 실제 게시됐는지 확인
 -> 실패하면 로그 tail을 PR comment로 게시
 ```
 
@@ -154,8 +154,8 @@ nginx나 터널은 `/github-webhook` 요청을 `http://127.0.0.1:18080/github-we
 - PR head는 GitHub의 `refs/pull/<number>/head`로 checkout합니다. fork repo의
   secret이나 Actions 권한은 사용하지 않습니다.
 - 처리한 comment id는 SQLite에 저장해 중복 실행을 막습니다.
-- 모델이 stdout에만 리뷰를 쓰면 실패입니다. marker 포함 댓글/리뷰가 실제 PR에
-  게시되어야 성공입니다.
+- 모델이 stdout에만 리뷰를 쓰면 실패입니다. marker 포함 inline review comment
+  또는 PR review body가 실제 PR에 게시되어야 성공입니다.
 - PR code 실행, build, test, install은 리뷰 지시에서 금지합니다.
 - `codex`는 파일 수정 없이 읽기 전용 리뷰로만 사용합니다. sandbox와 host
   integration 설정을 바꿀 때도 PR code 실행/build/test/install 금지와 marker
@@ -168,8 +168,8 @@ nginx나 터널은 `/github-webhook` 요청을 `http://127.0.0.1:18080/github-we
   wrapper가 필요한 옵션과 제한된 read/write/gh shell 명령으로 실행합니다.
   `Write`는 review dir 아래 리뷰 코멘트 markdown 작성용이고, checkout 파일
   변경은 금지합니다.
-- `opencode`, `claude`, `claude-p`, `codex` 모두 marker 포함 PR comment/review가 실제로
-  게시되어야 성공입니다.
+- `opencode`, `claude`, `claude-p`, `codex` 모두 marker 포함 inline review comment
+  또는 PR review body가 실제로 게시되어야 성공입니다.
 
 ## Legacy Workflows
 
