@@ -4,16 +4,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 User=review
 Environment=HOME=/home/review
 Environment=PATH=/home/review/.local/node/bin:/home/review/.local/bin:/opt/personal-review-machines/scripts:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
 Environment=BROWSER_AGENT_HOME=/home/review/.browser-agent
 Environment=PRM_CACHE_DIR=/home/review/.cache/personal-review-machines-chatgpt
 WorkingDirectory=/opt/personal-review-machines
-ExecStart=/opt/personal-review-machines/scripts/chatgpt-browser-start
+ExecStart=/opt/personal-review-machines/scripts/chatgpt-browser-supervise
 ExecStop=/opt/personal-review-machines/scripts/chatgpt-browser-stop
-RemainAfterExit=yes
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

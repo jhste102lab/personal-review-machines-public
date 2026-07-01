@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INTERVAL_SECONDS="${PRM_BROWSER_SUPERVISE_INTERVAL_SECONDS:-30}"
+CDP_PORT="${PRM_CDP_PORT:-9222}"
+LOG_PREFIX="chatgpt-browser-supervise"
+
+while true; do
+  if ! curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; then
+    echo "${LOG_PREFIX}: CDP is down; starting browser helpers"
+    if ! chatgpt-browser-start; then
+      echo "${LOG_PREFIX}: chatgpt-browser-start failed" >&2
+    fi
+  fi
+  sleep "${INTERVAL_SECONDS}"
+done

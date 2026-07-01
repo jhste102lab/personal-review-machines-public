@@ -1,7 +1,7 @@
 [Unit]
 Description=Personal Review Machines webhook service
-After=network-online.target
-Wants=network-online.target
+After=network-online.target personal-review-machines-chatgpt-browser.service
+Wants=network-online.target personal-review-machines-chatgpt-browser.service
 
 [Service]
 Type=simple
