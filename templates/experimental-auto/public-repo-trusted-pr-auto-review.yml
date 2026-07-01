@@ -1,0 +1,33 @@
+name: Public Trusted Claude PR Review
+
+# Experimental automatic review template.
+# This is not the recommended default. Prefer mention-triggered review:
+# templates/private-repo-mention-review.yml
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: public-trusted-claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: YOUR_GITHUB_ID/personal-review-machines/.github/workflows/claude-pr-review.yml@main
+    with:
+      max_turns: "5"
+      review_level: standard
+      language: Korean
+      trusted_pr_only: true
+      prompt_profile: default-review
+    secrets:
+      anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

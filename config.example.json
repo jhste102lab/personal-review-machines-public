@@ -1,0 +1,25 @@
+{
+  "webhook_secret": "replace-with-long-random-secret",
+  "webhook_url": "https://review.example.com/github-webhook",
+  "allowed_repositories": [
+    "YOUR_GITHUB_ID/YOUR_REPO"
+  ],
+  "allowed_author_associations": [
+    "OWNER"
+  ],
+  "repository_author_associations": {
+    "YOUR_ORG/YOUR_REPO": [
+      "OWNER",
+      "MEMBER",
+      "COLLABORATOR"
+    ]
+  },
+  "work_dir": "/var/lib/personal-review-machines/work",
+  "db_path": "/var/lib/personal-review-machines/reviews.sqlite3",
+  "bind_host": "127.0.0.1",
+  "bind_port": 18080,
+  "model_timeout_seconds": 2700,
+  "marker_settle_seconds": 90,
+  "posted_grace_seconds": 20,
+  "poll_seconds": 10
+}

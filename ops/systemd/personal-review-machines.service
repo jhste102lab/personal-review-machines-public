@@ -1,0 +1,16 @@
+[Unit]
+Description=Personal Review Machines webhook service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=review
+Environment=PATH=/home/review/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
+WorkingDirectory=/opt/personal-review-machines
+ExecStart=/usr/bin/python3 -m server.app --config /etc/personal-review-machines/config.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

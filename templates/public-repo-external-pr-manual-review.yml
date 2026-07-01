@@ -1,0 +1,32 @@
+name: Public External PR Manual Review
+
+# Optional public external fork path. The recommended default for personal
+# repositories is templates/private-repo-mention-review.yml.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: public-external-review-${{ github.event.issue.number }}-${{ github.event.comment.id }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '/review') &&
+      contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    uses: YOUR_GITHUB_ID/personal-review-machines/.github/workflows/public-external-pr-diff-review.yml@main
+    with:
+      pr_number: ${{ github.event.issue.number }}
+      review_level: standard
+      language: Korean
+      prompt_profile: default-review
+    secrets:
+      anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

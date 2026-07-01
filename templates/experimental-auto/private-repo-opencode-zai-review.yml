@@ -1,0 +1,31 @@
+name: OpenCode Z.AI PR Review
+
+# Experimental automatic review template.
+# This is not the recommended default. Prefer mention-triggered review:
+# templates/private-repo-mention-review.yml
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: opencode-zai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    uses: YOUR_GITHUB_ID/personal-review-machines/.github/workflows/opencode-zai-pr-review.yml@main
+    with:
+      model: glm-5.1
+      provider: zai-coding-plan
+      review_level: standard
+      language: Korean
+      prompt_profile: default-review
+    secrets:
+      zai_api_key: ${{ secrets.ZAI_API_KEY }}
