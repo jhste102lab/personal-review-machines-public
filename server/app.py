@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import json
 import logging
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -82,6 +83,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
         comment_id = int(comment["id"])
         if not self.store.enqueue_job(repo, comment_id, engine, instruction, event):
             return {"ignored": "already_processed", "comment_id": comment_id}
+        _add_comment_reaction(repo, comment_id, "eyes")
         return {"queued": True, "repository": repo, "comment_id": comment_id, "engine": engine}
 
     def _valid_signature(self, raw: bytes) -> bool:
@@ -137,6 +139,28 @@ def _worker_loop(config: Config, store: ReviewStore) -> None:
             LOG.exception("review worker loop failed")
         finally:
             time.sleep(config.job_poll_seconds)
+
+
+def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
+    try:
+        subprocess.run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                "-H",
+                "Accept: application/vnd.github+json",
+                f"repos/{repo}/issues/comments/{comment_id}/reactions",
+                "-f",
+                f"content={content}",
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        LOG.exception("failed to add reaction repo=%s comment_id=%s", repo, comment_id)
 
 
 def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
