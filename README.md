@@ -89,7 +89,8 @@ cp config.example.json config.json
   "bind_port": 18080,
   "job_max_attempts": 3,
   "job_retry_delay_seconds": 60,
-  "job_poll_seconds": 5
+  "job_poll_seconds": 5,
+  "job_worker_count": 3
 }
 ```
 

@@ -53,7 +53,8 @@ PR 열기
 - comment 작성자의 `author_association`은 기본적으로 `OWNER`여야 합니다.
 - org repo는 repo별 설정으로 `MEMBER`/`COLLABORATOR`를 추가 허용할 수 있습니다.
 - 같은 comment id는 한 번만 처리합니다.
-- 요청은 SQLite job queue에 저장한 뒤 처리합니다. daemon 재시작 시 `running` job은
+- 요청은 SQLite job queue에 저장한 뒤 `job_worker_count` 개 worker가 병렬 처리합니다.
+  daemon 재시작 시 `running` job은
   다시 `queued`로 돌려 재개하고, marker가 이미 PR에 있으면 중복 리뷰 없이 완료 처리합니다.
 - reviewer 실행 실패나 일시적 네트워크 문제로 marker가 게시되지 않으면
   `job_max_attempts` 횟수까지 재시도한 뒤 마지막 실패에서만 failure comment를 올립니다.

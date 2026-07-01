@@ -145,6 +145,8 @@ def run_review(
             head_sha = _run_text(["git", "rev-parse", "HEAD"], cwd=checkout_dir).strip()
             if engine == "claude_p":
                 _trust_claude_workspace(checkout_dir)
+            review_write_dir = _review_write_dir(engine, review_dir, checkout_dir)
+            review_write_dir.mkdir(parents=True, exist_ok=True)
             prompt_path.write_text(
                 _build_prompt(
                     repo=repo,
@@ -153,7 +155,7 @@ def run_review(
                     engine=engine,
                     instruction=instruction,
                     marker=marker,
-                    review_dir=review_dir,
+                    review_dir=review_write_dir,
                 ),
                 encoding="utf-8",
             )
@@ -189,6 +191,12 @@ def _checkout_pr(repo: str, pr_number: int, checkout_dir: Path) -> None:
     local_ref = f"refs/remotes/origin/pr-{pr_number}"
     _run(["git", "fetch", "--depth", "1", "origin", f"{pr_ref}:{local_ref}"], cwd=checkout_dir)
     _run(["git", "checkout", "--detach", local_ref], cwd=checkout_dir)
+
+
+def _review_write_dir(engine: str, review_dir: Path, checkout_dir: Path) -> Path:
+    if engine == "opencode":
+        return checkout_dir / ".ai-review"
+    return review_dir
 
 
 def _build_prompt(
@@ -260,11 +268,19 @@ def _build_prompt(
             "그 다음 진짜 필요한 파일/히스토리/체크 상태만 봐.",
             f"- Write 도구는 `{review_dir}` 아래 리뷰 코멘트 markdown 작성에만 써.",
             "- checkout 파일은 Edit/MultiEdit으로 고치지 마.",
-            "- checkout 아래에 새 파일을 만들지 마.",
             "다 봤으면 바로 github에 리뷰 코멘트 올리고, 올라갔는지 확인까지 해.",
             "중간에 멍때리지 말고 계속 가.",
         ]
     )
+    if engine == "opencode":
+        lines.extend(
+            [
+                f"- OpenCode 권한 경계 때문에 리뷰 초안 파일은 반드시 `{review_dir}` 아래에만 만들어.",
+                "- checkout 안의 기존 tracked 파일은 수정/삭제하지 마. 새 파일도 `.ai-review/` 아래 리뷰 초안만 허용한다.",
+            ]
+        )
+    else:
+        lines.append("- checkout 아래에 새 파일을 만들지 마.")
     if engine == "claude_p":
         lines.extend(
             [
@@ -513,6 +529,7 @@ def _agent_command(
             effort,
             "--plugin",
             "github",
+            "--parallel",
             "--inline-only",
             "--allow-copy-markdown-fallback",
             "--timeout",

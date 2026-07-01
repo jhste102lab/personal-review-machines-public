@@ -38,6 +38,7 @@ class Config:
     job_max_attempts: int = 3
     job_retry_delay_seconds: int = 60
     job_poll_seconds: int = 5
+    job_worker_count: int = 3
 
     def allowed_associations_for(self, repo: str) -> frozenset[str]:
         return self.repository_author_associations.get(repo.lower(), self.allowed_author_associations)
@@ -80,6 +81,7 @@ def load_config(path: str | Path) -> Config:
         job_max_attempts=int(raw.get("job_max_attempts", 3)),
         job_retry_delay_seconds=int(raw.get("job_retry_delay_seconds", 60)),
         job_poll_seconds=int(raw.get("job_poll_seconds", 5)),
+        job_worker_count=int(raw.get("job_worker_count", 3)),
     )
 
 

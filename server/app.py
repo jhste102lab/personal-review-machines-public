@@ -114,13 +114,14 @@ def serve(config_path: str) -> None:
     if interrupted:
         LOG.warning("requeued %s interrupted review job(s)", interrupted)
 
-    worker = threading.Thread(
-        target=_worker_loop,
-        args=(config, store),
-        name="review-worker",
-        daemon=True,
-    )
-    worker.start()
+    for worker_number in range(1, config.job_worker_count + 1):
+        worker = threading.Thread(
+            target=_worker_loop,
+            args=(config, store),
+            name=f"review-worker-{worker_number}",
+            daemon=True,
+        )
+        worker.start()
 
     WebhookHandler.config = config
     WebhookHandler.store = store
@@ -165,7 +166,8 @@ def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
 
 def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
     LOG.info(
-        "starting review job repo=%s comment_id=%s engine=%s attempt=%s",
+        "starting review job worker=%s repo=%s comment_id=%s engine=%s attempt=%s",
+        threading.current_thread().name,
         job.repository,
         job.comment_id,
         job.engine,
