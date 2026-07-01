@@ -411,6 +411,10 @@ def _run_agent_with_watchdog(
     with log_path.open("w", encoding="utf-8", errors="replace") as log:
         if engine in CHATGPT_ENGINES:
             _ensure_chatgpt_browser_ready(config, log)
+        env = os.environ.copy()
+        if engine in CHATGPT_ENGINES:
+            env["AGBROWSE_RAW_PROMPT"] = "1"
+            env["AGBROWSE_JSON_ERRORS"] = "1"
         proc = subprocess.Popen(
             command,
             cwd=checkout_dir,
@@ -418,6 +422,7 @@ def _run_agent_with_watchdog(
             stderr=subprocess.STDOUT,
             text=True,
             preexec_fn=os.setsid,
+            env=env,
         )
         deadline = time.monotonic() + config.model_timeout_seconds
         while proc.poll() is None and time.monotonic() < deadline:
