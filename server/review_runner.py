@@ -232,6 +232,17 @@ def _build_prompt(
     reviewer_identity = ENGINE_IDENTITIES.get(engine, engine)
     model_name = ENGINE_MODEL_NAMES.get(engine, reviewer_identity)
     template = _load_prompt_template("chatgpt-github-review-ko.md")
+    if engine == "opencode":
+        return _build_opencode_prompt(
+            repo=repo,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            instruction=instruction,
+            marker=marker,
+            review_dir=review_dir,
+            model_name=model_name,
+            template=template,
+        )
     lines = [
         "야, 코드리뷰 해.",
         "규칙은 다음과 같다. 묻지말고 끝까지 진행해.",
@@ -341,6 +352,40 @@ def _build_prompt(
     return "\n".join(lines) + "\n"
 
 
+def _build_opencode_prompt(
+    *,
+    repo: str,
+    pr_number: int,
+    head_sha: str,
+    instruction: str,
+    marker: str,
+    review_dir: Path,
+    model_name: str,
+    template: str,
+) -> str:
+    lines = [
+        model_name,
+        f"PR 번호: #{pr_number}",
+        f"레포 : {repo}",
+        f"Head SHA: {head_sha}",
+        "일반 PR comment가 아니라 Files changed의 변경 라인에 inline review comment로 직접 남겨.",
+        "파일 수정, 커밋, 푸시, 머지, 라벨 변경, 테스트/빌드/설치는 하지 마.",
+        "GitHub CLI로 PR diff를 확인하고, 확신할 수 있는 지적만 inline review로 제출해.",
+        f"각 inline comment의 첫 줄은 `{model_name}`만 쓴다.",
+        f"마지막 inline comment 마지막 줄 또는 inline comment가 없을 때 PR review body 마지막 줄에 `{marker}`를 넣어.",
+        f"리뷰 payload는 `{review_dir}/review-payload.json`에 만들고 `gh api --method POST repos/{repo}/pulls/{pr_number}/reviews --input {review_dir}/review-payload.json`로 제출해.",
+        "payload는 `commit_id`, `event: \"COMMENT\"`, `body`, `comments`를 사용한다.",
+        "comments[]는 `path`, `line`, `side`, `body`를 사용한다. 변경 후 라인은 `side: \"RIGHT\"`, 삭제 라인은 `side: \"LEFT\"`.",
+        "일반 대화 댓글인 `gh pr comment`는 쓰지 마.",
+        "checkout 파일은 수정하지 말고, 필요한 임시 파일은 review dir 아래에만 만들어.",
+        "",
+    ]
+    if instruction not in {"코드리뷰", "코드 리뷰"}:
+        lines.extend(["추가 요청:", instruction, ""])
+    lines.extend([template, ""])
+    return "\n".join(lines)
+
+
 def _build_chatgpt_prompt(
     *,
     repo: str,
@@ -350,49 +395,20 @@ def _build_chatgpt_prompt(
     instruction: str,
     marker: str,
 ) -> str:
-    reviewer_identity = ENGINE_IDENTITIES[engine]
     model_name = ENGINE_MODEL_NAMES[engine]
     template = _load_prompt_template("chatgpt-github-review-ko.md")
     lines = [
+        model_name,
         "@github",
         f"PR 번호: #{pr_number}",
-        f"Git repo: {repo}",
-        f"GitHub PR URL: https://github.com/{repo}/pull/{pr_number}",
-        f"Head SHA: {head_sha}",
-        "",
-        "GitHub connector/plugin이 이미 선택되어 있다. 공개 웹 검색이 아니라 선택된 GitHub connector로 이 PR을 열고 review를 submit해.",
-        "이 PR을 GitHub에서 직접 읽고, 일반 PR comment가 아니라 Files changed의 변경 라인에 inline review comment로 직접 남겨.",
-        "채팅창에 리뷰 본문을 작성하면 실패다. GitHub에 실제 submit review/post comment 액션을 수행해야 한다.",
-        "GitHub 게시가 완료된 뒤 채팅창에는 `POSTED_TO_GITHUB`만 출력해.",
-        "GitHub에 게시할 수 없으면 리뷰 내용을 채팅에 쓰지 말고 marker 없이 `GITHUB_INLINE_REVIEW_NOT_POSTED`만 출력하고 종료해.",
-        "접근 가능한 실제 PR diff, 변경 파일, PR 본문, 연결 이슈, 최근 리뷰/댓글만 근거로 사용해.",
-        "확인하지 못한 내용은 추측하지 말고 코멘트하지 마.",
-        "파일 수정, 코드 실행, 빌드, 테스트, 설치, 머지, 라벨 변경, 리뷰어 변경은 하지 마.",
-        "이 채팅창에는 marker를 절대 출력하지 마. marker는 GitHub inline review comment 또는 PR review body에 실제 게시할 때만 사용해.",
-        "GitHub inline review를 작성할 수 없으면 marker 없이 `GITHUB_INLINE_REVIEW_NOT_POSTED`만 출력하고 종료해.",
-        "",
-        "GitHub 작성 방식:",
-        "- 확신할 수 있는 각 지적은 반드시 변경 파일의 정확한 diff line에 inline review comment로 남겨.",
-        f"- 각 inline comment의 첫 줄은 모델명 `{model_name}`만 쓴다.",
-        "- 둘째 줄부터 기존 코드리뷰 지시문에 따라 문제, 영향, 수정 방향을 쓴다.",
-        "- 여러 지적이 있으면 지적마다 별도 inline comment로 남긴다.",
-        "- 마지막 inline comment의 마지막 줄에는 아래 marker를 그대로 한 줄로 넣어.",
-        f"- inline comments가 있으면 PR review body에는 `{model_name}`만 남기고, 실제 지적 내용은 inline comment에만 쓴다.",
-        "- 확신할 수 있는 지적이 없으면 inline comment를 만들지 말고 PR review body에만 모델명 첫 줄과 marker를 남겨.",
-        "- 이 채팅창에는 marker를 절대 쓰지 마. GitHub에 실제 게시하지 못한 marker 출력은 실패다.",
-        "- 일반 PR comment는 쓰지 마.",
-        "- 채팅창에는 리뷰 코멘트 초안/요약/marker를 쓰지 마. GitHub 게시 성공 후 `POSTED_TO_GITHUB`만 써.",
-        marker,
-        "",
-        f"리뷰어 identity: {reviewer_identity}",
-        f"모델명: {model_name}",
+        f"레포 : {repo}",
+        "일반 PR comment가 아니라 Files changed의 변경 라인에 inline review comment로 직접 남겨",
         "",
     ]
     if instruction not in {"코드리뷰", "코드 리뷰"}:
         lines.extend(["추가 요청:", instruction, ""])
     lines.extend([template, ""])
     return "\n".join(lines)
-
 
 def _load_prompt_template(name: str) -> str:
     path = Path(__file__).resolve().parent.parent / "prompts" / name
