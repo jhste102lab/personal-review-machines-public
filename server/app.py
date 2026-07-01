@@ -6,11 +6,12 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config, load_config
 from .review_runner import parse_request, run_review
-from .store import ReviewStore
+from .store import ReviewJob, ReviewStore
 
 
 LOG = logging.getLogger("personal-review-machines")
@@ -79,16 +80,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
         engine, instruction = parsed
 
         comment_id = int(comment["id"])
-        if not self.store.claim_comment(repo, comment_id, engine):
+        if not self.store.enqueue_job(repo, comment_id, engine, instruction, event):
             return {"ignored": "already_processed", "comment_id": comment_id}
-
-        thread = threading.Thread(
-            target=run_review,
-            args=(self.config, event, engine, instruction),
-            name=f"review-{repo}-{comment_id}",
-            daemon=True,
-        )
-        thread.start()
         return {"queued": True, "repository": repo, "comment_id": comment_id, "engine": engine}
 
     def _valid_signature(self, raw: bytes) -> bool:
@@ -115,12 +108,83 @@ def serve(config_path: str) -> None:
     config = load_config(config_path)
     config.work_dir.mkdir(parents=True, exist_ok=True)
     store = ReviewStore(config.db_path)
+    interrupted = store.requeue_interrupted_jobs()
+    if interrupted:
+        LOG.warning("requeued %s interrupted review job(s)", interrupted)
+
+    worker = threading.Thread(
+        target=_worker_loop,
+        args=(config, store),
+        name="review-worker",
+        daemon=True,
+    )
+    worker.start()
 
     WebhookHandler.config = config
     WebhookHandler.store = store
     server = ThreadingHTTPServer((config.bind_host, config.bind_port), WebhookHandler)
     LOG.info("listening on %s:%s", config.bind_host, config.bind_port)
     server.serve_forever()
+
+
+def _worker_loop(config: Config, store: ReviewStore) -> None:
+    while True:
+        try:
+            job = store.claim_next_job()
+            if job is not None:
+                _run_job(config, store, job)
+        except Exception:
+            LOG.exception("review worker loop failed")
+        finally:
+            time.sleep(config.job_poll_seconds)
+
+
+def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
+    LOG.info(
+        "starting review job repo=%s comment_id=%s engine=%s attempt=%s",
+        job.repository,
+        job.comment_id,
+        job.engine,
+        job.attempts,
+    )
+    final_attempt = job.attempts >= config.job_max_attempts
+    try:
+        ok = run_review(
+            config,
+            job.event,
+            job.engine,
+            job.instruction,
+            post_failure=final_attempt,
+        )
+    except Exception:
+        LOG.exception("review job crashed repo=%s comment_id=%s", job.repository, job.comment_id)
+        ok = False
+
+    if ok:
+        store.finish_job(job.repository, job.comment_id)
+        LOG.info("finished review job repo=%s comment_id=%s", job.repository, job.comment_id)
+        return
+
+    message = "review marker was not posted"
+    if final_attempt:
+        store.fail_job(job.repository, job.comment_id, message)
+        LOG.error(
+            "failed review job repo=%s comment_id=%s attempts=%s",
+            job.repository,
+            job.comment_id,
+            job.attempts,
+        )
+        return
+
+    delay = config.job_retry_delay_seconds * job.attempts
+    store.retry_job(job.repository, job.comment_id, delay, message)
+    LOG.warning(
+        "retrying review job repo=%s comment_id=%s attempt=%s delay=%ss",
+        job.repository,
+        job.comment_id,
+        job.attempts,
+        delay,
+    )
 
 
 def main() -> None:

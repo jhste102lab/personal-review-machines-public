@@ -114,7 +114,14 @@ def parse_request(body: str) -> tuple[str, str] | None:
     return engine, instruction
 
 
-def run_review(config: Config, event: dict, engine: str, instruction: str) -> None:
+def run_review(
+    config: Config,
+    event: dict,
+    engine: str,
+    instruction: str,
+    *,
+    post_failure: bool = True,
+) -> bool:
     repo = event["repository"]["full_name"]
     pr_number = int(event["issue"]["number"])
     comment_id = int(event["comment"]["id"])
@@ -122,6 +129,9 @@ def run_review(config: Config, event: dict, engine: str, instruction: str) -> No
     marker = f"<!-- ai-pr-review-run:webhook:{comment_id}:{engine} -->"
     review_root = config.work_dir / repo.replace("/", "__")
     review_root.mkdir(parents=True, exist_ok=True)
+
+    if _marker_exists(repo, pr_number, marker):
+        return True
 
     with tempfile.TemporaryDirectory(prefix=f"pr-{pr_number}-{comment_id}-", dir=review_root) as tmp:
         review_dir = Path(tmp)
@@ -160,13 +170,17 @@ def run_review(config: Config, event: dict, engine: str, instruction: str) -> No
                 run_id=run_id,
             )
             if _marker_exists(repo, pr_number, marker):
-                return
+                return True
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
                 log.write(f"\nAgent exited with code {exit_code}, but the required marker was not posted.\n")
-            _post_failure(repo, pr_number, engine, marker, log_path, failure_path)
+            if post_failure:
+                _post_failure(repo, pr_number, engine, marker, log_path, failure_path)
+            return False
         except Exception as exc:
             log_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
-            _post_failure(repo, pr_number, engine, marker, log_path, failure_path)
+            if post_failure:
+                _post_failure(repo, pr_number, engine, marker, log_path, failure_path)
+            return False
 
 
 def _checkout_pr(repo: str, pr_number: int, checkout_dir: Path) -> None:
