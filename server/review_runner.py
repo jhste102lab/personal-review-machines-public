@@ -371,6 +371,8 @@ def _build_opencode_prompt(
         "일반 PR comment가 아니라 Files changed의 변경 라인에 inline review comment로 직접 남겨.",
         "파일 수정, 커밋, 푸시, 머지, 라벨 변경, 테스트/빌드/설치는 하지 마.",
         "GitHub CLI로 PR diff를 확인하고, 확신할 수 있는 지적만 inline review로 제출해.",
+        "지적 내용은 review body에 쓰지 말고, 각 지적을 comments[]의 변경 라인별 inline comment로 나눠서 남겨.",
+        "review body에는 모델명만 남겨.",
         f"각 inline comment의 첫 줄은 `{model_name}`만 쓴다.",
         f"마지막 inline comment 마지막 줄 또는 inline comment가 없을 때 PR review body 마지막 줄에 `{marker}`를 넣어.",
         f"리뷰 payload는 `{review_dir}/review-payload.json`에 만들고 `gh api --method POST repos/{repo}/pulls/{pr_number}/reviews --input {review_dir}/review-payload.json`로 제출해.",
