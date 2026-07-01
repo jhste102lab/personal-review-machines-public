@@ -5,9 +5,11 @@ if [ "${1:-}" = "--help" ]; then
   cat <<'EOF'
 usage: patch-agbrowse-raw-prompt [agbrowse-binary]
 
-Patch the locally installed agbrowse web-ai prompt renderer so commands run with
-AGBROWSE_RAW_PROMPT=1 send the exact --prompt text to ChatGPT. Without the env
-var, agbrowse behavior is unchanged.
+Patch the locally installed agbrowse web-ai ChatGPT helpers so:
+- AGBROWSE_RAW_PROMPT=1 sends the exact --prompt text to ChatGPT.
+- Connector plugins visible in the first composer menu, such as GitHub in the
+  current ChatGPT UI, are selected before falling back to the old More submenu.
+Without the env var, normal prompt-envelope behavior is unchanged.
 EOF
   exit 0
 fi
@@ -95,4 +97,64 @@ if not backup.exists():
     backup.write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
 path.write_text(text, encoding='utf-8')
 print(f'patched {path}')
+PY
+
+tools="$pkg_dir/web-ai/chatgpt-tools.mjs"
+if [ ! -f "$tools" ]; then
+  echo "agbrowse chatgpt-tools.mjs not found at $tools" >&2
+  exit 1
+fi
+
+python3 - "$tools" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text(encoding='utf-8')
+old = """async function selectMoreComposerMenuItem(page, labels, usedFallbacks) {
+    await openComposerPlusMenu(page, usedFallbacks);
+    const more = await findVisibleMenuItemByLabels(page, ['더 보기', 'More']);
+    if (!more) return false;
+    await more.hover({ timeout: 1_000 }).catch(() => undefined);
+    await page.waitForTimeout(250).catch(() => undefined);
+    if (!(await anyMenuItemVisible(page, labels))) {
+        await more.click({ timeout: 2_000 }).catch(() => undefined);
+        await page.waitForTimeout(400).catch(() => undefined);
+    }
+    const item = await findVisibleMenuItemByLabels(page, labels);
+    if (!item) return false;
+    if (await checkedState(item) === 'true') return true;
+    return clickMenuItem(page, item);
+}
+"""
+new = """async function selectMoreComposerMenuItem(page, labels, usedFallbacks) {
+    await openComposerPlusMenu(page, usedFallbacks);
+    let item = await findVisibleMenuItemByLabels(page, labels);
+    if (item) {
+        if (await checkedState(item) === 'true') return true;
+        return clickMenuItem(page, item);
+    }
+    const more = await findVisibleMenuItemByLabels(page, ['더 보기', 'More']);
+    if (!more) return false;
+    await more.hover({ timeout: 1_000 }).catch(() => undefined);
+    await page.waitForTimeout(250).catch(() => undefined);
+    if (!(await anyMenuItemVisible(page, labels))) {
+        await more.click({ timeout: 2_000 }).catch(() => undefined);
+        await page.waitForTimeout(400).catch(() => undefined);
+    }
+    item = await findVisibleMenuItemByLabels(page, labels);
+    if (!item) return false;
+    if (await checkedState(item) === 'true') return true;
+    return clickMenuItem(page, item);
+}
+"""
+if old in text:
+    backup = path.with_suffix(path.suffix + '.prm-backup')
+    if not backup.exists():
+        backup.write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+    path.write_text(text.replace(old, new, 1), encoding='utf-8')
+    print(f'patched {path}')
+elif 'let item = await findVisibleMenuItemByLabels(page, labels);' in text:
+    print(f'already patched {path}')
+else:
+    raise SystemExit('patch anchor not found: selectMoreComposerMenuItem')
 PY
