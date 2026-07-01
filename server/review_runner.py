@@ -16,9 +16,9 @@ from .config import Config
 
 ENGINE_MENTIONS = {
     "오픈코드": "opencode",
-    "gpt높음": "chatgpt_high",
-    "gpt매우높음": "chatgpt_xhigh",
-    "gpt확장": "chatgpt_extended",
+    "지피티높음": "chatgpt_high",
+    "지피티매우높음": "chatgpt_xhigh",
+    "지피티확장": "chatgpt_extended",
     "클로드-p": "claude_p",
     "클로드": "claude",
     "코덱스": "codexcli",
@@ -27,9 +27,9 @@ ENGINE_MENTIONS = {
 
 ENGINE_IDENTITIES = {
     "opencode": "@오픈코드 / opencode",
-    "chatgpt_high": "@gpt높음 / ChatGPT Thinking High",
-    "chatgpt_xhigh": "@gpt매우높음 / ChatGPT Thinking Very High",
-    "chatgpt_extended": "@gpt확장 / ChatGPT Pro Extended",
+    "chatgpt_high": "@지피티높음 / ChatGPT Thinking High",
+    "chatgpt_xhigh": "@지피티매우높음 / ChatGPT Thinking Very High",
+    "chatgpt_extended": "@지피티확장 / ChatGPT Pro Extended",
     "claude": "@클로드 / claude -p",
     "claude_p": "@클로드-p / claude-p",
     "codexcli": "@코덱스 / codex",
@@ -104,7 +104,7 @@ CLAUDE_ALLOWED_TOOLS = [
 
 
 def parse_request(body: str) -> tuple[str, str] | None:
-    match = re.match(r"^\s*@(?P<engine>오픈코드|gpt매우높음|gpt높음|gpt확장|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
+    match = re.match(r"^\s*@(?P<engine>오픈코드|지피티매우높음|지피티높음|지피티확장|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
     if not match:
         return None
     # The mention is Korean, but the "-p" suffix may arrive as "-P" under re.I.

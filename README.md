@@ -15,7 +15,7 @@ PR 댓글 생성
 -> GitHub webhook이 운영 서버 endpoint 호출
 -> HMAC signature 검증
 -> repo allowlist + author_association 정책 확인
--> @오픈코드 / @gpt높음 / @gpt매우높음 / @gpt확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
+-> @오픈코드 / @지피티높음 / @지피티매우높음 / @지피티확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
 -> gh로 PR context/diff/최근 댓글/리뷰 수집
 -> 로컬 opencode/agbrowse(ChatGPT)/claude/claude-p/codex 실행
 -> marker 포함 PR comment가 실제 게시됐는지 확인
@@ -28,9 +28,9 @@ owner가 PR 댓글 첫머리에 아래 멘션을 남길 때만 실행합니다.
 ```text
 @오픈코드 리뷰해줘
 @오픈코드 동시성 문제 중심으로 봐
-@gpt높음 리뷰해줘
-@gpt매우높음 리뷰해줘
-@gpt확장 리뷰해줘
+@지피티높음 리뷰해줘
+@지피티매우높음 리뷰해줘
+@지피티확장 리뷰해줘
 @클로드 리뷰해줘
 @클로드-p 리뷰해줘
 @코덱스 리뷰해줘
