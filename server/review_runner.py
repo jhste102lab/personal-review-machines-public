@@ -16,6 +16,9 @@ from .config import Config
 
 ENGINE_MENTIONS = {
     "오픈코드": "opencode",
+    "gpt높음": "chatgpt_high",
+    "gpt매우높음": "chatgpt_xhigh",
+    "gpt확장": "chatgpt_extended",
     "클로드-p": "claude_p",
     "클로드": "claude",
     "코덱스": "codexcli",
@@ -24,10 +27,20 @@ ENGINE_MENTIONS = {
 
 ENGINE_IDENTITIES = {
     "opencode": "@오픈코드 / opencode",
+    "chatgpt_high": "@gpt높음 / ChatGPT Thinking High",
+    "chatgpt_xhigh": "@gpt매우높음 / ChatGPT Thinking Very High",
+    "chatgpt_extended": "@gpt확장 / ChatGPT Pro Extended",
     "claude": "@클로드 / claude -p",
     "claude_p": "@클로드-p / claude-p",
     "codexcli": "@코덱스 / codex",
     "codexcli_final": "@최종리뷰 / codex",
+}
+
+CHATGPT_ENGINES = frozenset({"chatgpt_high", "chatgpt_xhigh", "chatgpt_extended"})
+CHATGPT_MODEL_EFFORTS = {
+    "chatgpt_high": ("thinking", "extended"),
+    "chatgpt_xhigh": ("thinking", "heavy"),
+    "chatgpt_extended": ("pro", "extended"),
 }
 
 CLAUDE_REVIEW_EFFORT = "high"
@@ -91,7 +104,7 @@ CLAUDE_ALLOWED_TOOLS = [
 
 
 def parse_request(body: str) -> tuple[str, str] | None:
-    match = re.match(r"^\s*@(?P<engine>오픈코드|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
+    match = re.match(r"^\s*@(?P<engine>오픈코드|gpt매우높음|gpt높음|gpt확장|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
     if not match:
         return None
     # The mention is Korean, but the "-p" suffix may arrive as "-P" under re.I.
@@ -174,6 +187,15 @@ def _build_prompt(
     marker: str,
     review_dir: Path,
 ) -> str:
+    if engine in CHATGPT_ENGINES:
+        return _build_chatgpt_prompt(
+            repo=repo,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            engine=engine,
+            instruction=instruction,
+            marker=marker,
+        )
     reviewer_identity = ENGINE_IDENTITIES.get(engine, engine)
     lines = [
         "야, 코드리뷰 해.",
@@ -252,8 +274,48 @@ def _build_prompt(
                 "- 최종 댓글은 `최종 판단`, `Merge blocker`, `Non-blocking notes`, `확인한 근거`, `확인하지 못한 것` 순서로 써.",
                 "- blocker가 없으면 쓸데없이 긴 코멘트로 늘리지 말고, 확인한 핵심 근거만 남겨.",
             ]
-        )
+    )
     return "\n".join(lines) + "\n"
+
+
+def _build_chatgpt_prompt(
+    *,
+    repo: str,
+    pr_number: int,
+    head_sha: str,
+    engine: str,
+    instruction: str,
+    marker: str,
+) -> str:
+    reviewer_identity = ENGINE_IDENTITIES[engine]
+    template = _load_prompt_template("chatgpt-github-review-ko.md")
+    lines = [
+        "@github",
+        f"PR 번호: #{pr_number}",
+        f"Git repo: {repo}",
+        f"Head SHA: {head_sha}",
+        "",
+        "이 PR을 GitHub에서 직접 읽고, 가능하면 GitHub PR에 직접 리뷰 코멘트를 남겨.",
+        "채팅창에만 답변하고 끝내면 실패다. 반드시 GitHub PR에 직접 댓글 또는 리뷰 코멘트를 남겨.",
+        "접근 가능한 실제 PR diff, 변경 파일, PR 본문, 연결 이슈, 최근 리뷰/댓글만 근거로 사용해.",
+        "확인하지 못한 내용은 추측하지 말고 코멘트하지 마.",
+        "파일 수정, 코드 실행, 빌드, 테스트, 설치, 머지, 라벨 변경, 리뷰어 변경은 하지 마.",
+        "",
+        "리뷰 댓글 마지막 줄에는 아래 marker를 그대로 한 줄로 넣어.",
+        marker,
+        "",
+        f"리뷰어 identity: {reviewer_identity}",
+        "",
+    ]
+    if instruction not in {"코드리뷰", "코드 리뷰"}:
+        lines.extend(["추가 요청:", instruction, ""])
+    lines.extend([template, ""])
+    return "\n".join(lines)
+
+
+def _load_prompt_template(name: str) -> str:
+    path = Path(__file__).resolve().parent.parent / "prompts" / name
+    return path.read_text(encoding="utf-8").strip()
 
 
 def _run_agent_with_watchdog(
@@ -269,8 +331,10 @@ def _run_agent_with_watchdog(
     log_path: Path,
     run_id: str,
 ) -> int:
-    command = _agent_command(engine, prompt_path, checkout_dir, review_dir, run_id, config.model_timeout_seconds)
+    command = _agent_command(config, engine, prompt_path, checkout_dir, review_dir, run_id, config.model_timeout_seconds)
     with log_path.open("w", encoding="utf-8", errors="replace") as log:
+        if engine in CHATGPT_ENGINES:
+            _ensure_chatgpt_browser_ready(config, log)
         proc = subprocess.Popen(
             command,
             cwd=checkout_dir,
@@ -309,6 +373,7 @@ def _run_agent_with_watchdog(
 
 
 def _agent_command(
+    config: Config,
     engine: str,
     prompt_path: Path,
     checkout_dir: Path,
@@ -415,7 +480,47 @@ def _agent_command(
             "--raw-log",
             str(raw_log),
         ]
+    if engine in CHATGPT_ENGINES:
+        binary = shutil.which("agbrowse") or str(Path.home() / ".local/node/bin/agbrowse")
+        if not Path(binary).exists():
+            raise RuntimeError("agbrowse CLI was not found")
+        model, effort = CHATGPT_MODEL_EFFORTS[engine]
+        return [
+            binary,
+            "web-ai",
+            "query",
+            "--vendor",
+            "chatgpt",
+            "--url",
+            config.chatgpt_url,
+            "--model",
+            model,
+            "--effort",
+            effort,
+            "--plugin",
+            "github",
+            "--inline-only",
+            "--allow-copy-markdown-fallback",
+            "--timeout",
+            str(timeout_seconds),
+            "--prompt",
+            prompt,
+            "--json",
+        ]
     raise RuntimeError(f"Unknown review engine: {engine}")
+
+
+def _ensure_chatgpt_browser_ready(config: Config, log: object) -> None:
+    env = os.environ.copy()
+    env["PRM_CHATGPT_URL"] = config.chatgpt_url
+    subprocess.run(
+        list(config.chatgpt_browser_start_command),
+        check=True,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+    )
 
 
 def _trust_claude_workspace(checkout_dir: Path) -> None:

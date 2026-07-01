@@ -1,18 +1,19 @@
 [Unit]
-Description=Personal Review Machines webhook service
+Description=Personal Review Machines ChatGPT browser helpers
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 User=review
 Environment=HOME=/home/review
 Environment=PATH=/home/review/.local/node/bin:/home/review/.local/bin:/opt/personal-review-machines/scripts:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
 Environment=BROWSER_AGENT_HOME=/home/review/.browser-agent
+Environment=PRM_CACHE_DIR=/home/review/.cache/personal-review-machines-chatgpt
 WorkingDirectory=/opt/personal-review-machines
-ExecStart=/usr/bin/python3 -m server.app --config /etc/personal-review-machines/config.json
-Restart=on-failure
-RestartSec=5
+ExecStart=/opt/personal-review-machines/scripts/chatgpt-browser-start
+ExecStop=/opt/personal-review-machines/scripts/chatgpt-browser-stop
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target

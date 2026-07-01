@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -lt 3 ]; then
+  echo "usage: chatgpt-pr-smoke <repo> <pr_number> <marker> [model] [effort]" >&2
+  exit 2
+fi
+
+REPO="$1"
+PR="$2"
+MARKER="$3"
+MODEL="${4:-thinking}"
+EFFORT="${5:-extended}"
+CHATGPT_URL="${PRM_CHATGPT_URL:-https://chatgpt.com/}"
+USER_HOME="${PRM_HOME_OVERRIDE:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+if [ -z "${USER_HOME}" ]; then
+  USER_HOME="${HOME:-/tmp}"
+fi
+export BROWSER_AGENT_HOME="${BROWSER_AGENT_HOME:-$USER_HOME/.browser-agent}"
+
+PROMPT=$(cat <<PROMPT
+@github
+PR 번호: #$PR
+Git repo: $REPO
+
+이 PR에 테스트 댓글을 직접 작성해.
+댓글은 한국어 한두 줄이면 충분하다.
+본문 끝에 아래 marker를 그대로 한 줄로 넣어.
+$MARKER
+PROMPT
+)
+
+AGBROWSE_JSON_ERRORS=1 agbrowse web-ai query \
+  --vendor chatgpt \
+  --url "$CHATGPT_URL" \
+  --model "$MODEL" \
+  --effort "$EFFORT" \
+  --plugin github \
+  --inline-only \
+  --timeout 3600 \
+  --allow-copy-markdown-fallback \
+  --prompt "$PROMPT" \
+  --json

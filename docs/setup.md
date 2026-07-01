@@ -53,12 +53,30 @@ sudo systemctl restart personal-review-machines.service
 4. 운영 서버의 로컬 인증과 reviewer CLI를 확인합니다.
 
 ```bash
+sudo apt-get update
+sudo apt-get install -y xvfb x11vnc novnc websockify chromium-browser || sudo apt-get install -y xvfb x11vnc novnc websockify chromium
 curl -sS http://127.0.0.1:18080/health
 gh auth status
 opencode --version
+agbrowse --help
 claude --version
 claude-p --version
 codex --version
+```
+
+ChatGPT reviewer를 쓸 경우에는 브라우저 helper도 한 번 준비합니다.
+
+```bash
+scripts/chatgpt-browser-start
+scripts/chatgpt-browser-status
+```
+
+처음 한 번은 VNC/noVNC로 접속해서 ChatGPT 로그인과 GitHub 연동을 직접 완료해야 합니다.
+기본 포트는 localhost 바인딩 기준 VNC `5901`, noVNC `6080`입니다.
+
+```bash
+ssh -L 6080:127.0.0.1:6080 USER@HOST
+# then open http://127.0.0.1:6080/vnc.html
 ```
 
 5. allowed repo의 PR 댓글 첫머리에 멘션을 남기고 marker 포함 댓글이 실제 PR에
@@ -66,9 +84,20 @@ codex --version
 
 ```text
 @오픈코드 리뷰해줘
+@gpt높음 리뷰해줘
+@gpt매우높음 리뷰해줘
+@gpt확장 리뷰해줘
 @클로드 리뷰해줘
 @클로드-p 리뷰해줘
 @코덱스 리뷰해줘
+```
+
+systemd로 부팅 시 브라우저 helper까지 올리려면 아래 서비스도 함께 설치합니다.
+
+```bash
+sudo install -m 644 ops/systemd/personal-review-machines-chatgpt-browser.service /etc/systemd/system/personal-review-machines-chatgpt-browser.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now personal-review-machines-chatgpt-browser.service
 ```
 
 ## Legacy reusable workflow setup

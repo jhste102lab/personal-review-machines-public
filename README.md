@@ -4,7 +4,7 @@ GitHub repo들의 AI PR 리뷰 요청을 운영 서버에서 처리하는 webhoo
 
 기본 구조는 GitHub Actions self-hosted runner를 늘리지 않습니다. 각 대상 repo에
 GitHub webhook만 설치하고, 이 서버의 daemon이 `issue_comment` 이벤트를 받아 로컬
-`gh`, `opencode`, `claude`, `claude-p`, `codex`로 리뷰를 실행한 뒤 원 PR에 댓글을 답니다.
+`gh`, `opencode`, `agbrowse(ChatGPT)`, `claude`, `claude-p`, `codex`로 리뷰를 실행한 뒤 원 PR에 댓글을 답니다.
 다른 repo들은 이 repo의 workflow를 호출하는 것이 아니라, 같은 webhook
 endpoint를 등록해서 사용합니다.
 
@@ -15,9 +15,9 @@ PR 댓글 생성
 -> GitHub webhook이 운영 서버 endpoint 호출
 -> HMAC signature 검증
 -> repo allowlist + author_association 정책 확인
--> @오픈코드 / @클로드 / @클로드-p / @코덱스 멘션 파싱
+-> @오픈코드 / @gpt높음 / @gpt매우높음 / @gpt확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
 -> gh로 PR context/diff/최근 댓글/리뷰 수집
--> 로컬 opencode/claude/claude-p/codex 실행
+-> 로컬 opencode/agbrowse(ChatGPT)/claude/claude-p/codex 실행
 -> marker 포함 PR comment가 실제 게시됐는지 확인
 -> 실패하면 로그 tail을 PR comment로 게시
 ```
@@ -28,6 +28,9 @@ owner가 PR 댓글 첫머리에 아래 멘션을 남길 때만 실행합니다.
 ```text
 @오픈코드 리뷰해줘
 @오픈코드 동시성 문제 중심으로 봐
+@gpt높음 리뷰해줘
+@gpt매우높음 리뷰해줘
+@gpt확장 리뷰해줘
 @클로드 리뷰해줘
 @클로드-p 리뷰해줘
 @코덱스 리뷰해줘
@@ -47,6 +50,7 @@ server/
 config.example.json
 ops/systemd/
   personal-review-machines.service
+  personal-review-machines-chatgpt-browser.service
 docs/
   security.md
   setup.md
@@ -107,6 +111,7 @@ sudo systemctl restart personal-review-machines.service
 ```bash
 gh auth status
 opencode --version
+agbrowse --help
 claude --version
 claude-p --version
 codex --version
@@ -116,7 +121,9 @@ codex --version
 
 ```bash
 sudo install -m 644 ops/systemd/personal-review-machines.service /etc/systemd/system/personal-review-machines.service
+sudo install -m 644 ops/systemd/personal-review-machines-chatgpt-browser.service /etc/systemd/system/personal-review-machines-chatgpt-browser.service
 sudo systemctl daemon-reload
+sudo systemctl enable --now personal-review-machines-chatgpt-browser.service
 sudo systemctl enable --now personal-review-machines.service
 ```
 

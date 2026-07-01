@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DISPLAY_NUM="${PRM_DISPLAY:-:99}"
+VNC_PORT="${PRM_VNC_PORT:-5901}"
+NOVNC_PORT="${PRM_NOVNC_PORT:-6080}"
+CDP_PORT="${PRM_CDP_PORT:-9222}"
+CHROME_PATH="${PRM_CHROME_PATH:-/snap/chromium/current/usr/lib/chromium-browser/chrome}"
+USER_HOME="${PRM_HOME_OVERRIDE:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+if [ -z "${USER_HOME}" ]; then
+  USER_HOME="${HOME:-/tmp}"
+fi
+BROWSER_AGENT_HOME="${BROWSER_AGENT_HOME:-$USER_HOME/.browser-agent}"
+CACHE_DIR="${PRM_CACHE_DIR:-$USER_HOME/.cache/personal-review-machines-chatgpt}"
+PROFILE_DIR="${PRM_BROWSER_PROFILE_DIR:-$BROWSER_AGENT_HOME/browser-profile}"
+CHATGPT_URL="${PRM_CHATGPT_URL:-https://chatgpt.com/}"
+
+mkdir -p "$CACHE_DIR" "$PROFILE_DIR"
+
+for required in Xvfb x11vnc websockify curl; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "missing required command: $required" >&2
+    exit 1
+  fi
+done
+
+if [ ! -x "$CHROME_PATH" ]; then
+  echo "chrome binary not found: $CHROME_PATH" >&2
+  exit 1
+fi
+
+if ! pgrep -f "Xvfb ${DISPLAY_NUM}" >/dev/null 2>&1; then
+  nohup Xvfb "${DISPLAY_NUM}" -screen 0 1600x1000x24 -ac +extension RANDR > "$CACHE_DIR/xvfb.log" 2>&1 &
+  sleep 2
+fi
+
+if ! pgrep -f "x11vnc .*${VNC_PORT}" >/dev/null 2>&1; then
+  nohup x11vnc -display "${DISPLAY_NUM}" -forever -shared -localhost -rfbport "${VNC_PORT}" -nopw > "$CACHE_DIR/x11vnc.log" 2>&1 &
+  sleep 2
+fi
+
+if ! pgrep -f "websockify .*${NOVNC_PORT} .*${VNC_PORT}" >/dev/null 2>&1; then
+  nohup websockify "127.0.0.1:${NOVNC_PORT}" "localhost:${VNC_PORT}" --web=/usr/share/novnc/ > "$CACHE_DIR/websockify.log" 2>&1 &
+  sleep 2
+fi
+
+if ! curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; then
+  nohup "$CHROME_PATH" \
+    --password-store=basic \
+    --gtk-version=3 \
+    --disable-features=TFLiteLanguageDetectionEnabled \
+    --remote-debugging-port="${CDP_PORT}" \
+    --no-first-run \
+    --no-default-browser-check \
+    --no-sandbox \
+    --disable-gpu \
+    --user-data-dir="$PROFILE_DIR" \
+    about:blank > "$CACHE_DIR/chrome.log" 2>&1 &
+  sleep 8
+fi
+
+if command -v agbrowse >/dev/null 2>&1; then
+  export DISPLAY="${DISPLAY_NUM}"
+  export BROWSER_AGENT_HOME
+  agbrowse navigate "${CHATGPT_URL}" >/dev/null 2>&1 || true
+fi
+
+echo "started"
+echo "- CDP: http://127.0.0.1:${CDP_PORT}"
+echo "- VNC: ssh -L ${VNC_PORT}:127.0.0.1:${VNC_PORT} <host>"
+echo "- noVNC: ssh -L ${NOVNC_PORT}:127.0.0.1:${NOVNC_PORT} <host>  then open http://127.0.0.1:${NOVNC_PORT}/vnc.html"

@@ -27,6 +27,8 @@ class Config:
     repository_author_associations: dict[str, frozenset[str]]
     work_dir: Path
     db_path: Path
+    chatgpt_browser_start_command: tuple[str, ...] = ("chatgpt-browser-start",)
+    chatgpt_url: str = "https://chatgpt.com/"
     bind_host: str = "127.0.0.1"
     bind_port: int = 18080
     model_timeout_seconds: int = 2700
@@ -61,6 +63,11 @@ def load_config(path: str | Path) -> Config:
         repository_author_associations=per_repo_associations,
         work_dir=Path(raw.get("work_dir", str(Path.home() / ".local/state/personal-review-machines/work"))),
         db_path=Path(raw.get("db_path", str(Path.home() / ".local/state/personal-review-machines/reviews.sqlite3"))),
+        chatgpt_browser_start_command=_load_command(
+            raw.get("chatgpt_browser_start_command", ["chatgpt-browser-start"]),
+            "chatgpt_browser_start_command",
+        ),
+        chatgpt_url=str(raw.get("chatgpt_url", "https://chatgpt.com/")),
         bind_host=str(raw.get("bind_host", "127.0.0.1")),
         bind_port=int(raw.get("bind_port", 18080)),
         model_timeout_seconds=int(raw.get("model_timeout_seconds", 2700)),
@@ -80,3 +87,15 @@ def _load_association_set(value: object) -> frozenset[str]:
     if unknown:
         raise ValueError(f"unknown author association value: {', '.join(sorted(unknown))}")
     return associations
+
+
+def _load_command(value: object, field_name: str) -> tuple[str, ...]:
+    if isinstance(value, str):
+        parts = tuple(part for part in value.split() if part)
+    elif isinstance(value, list):
+        parts = tuple(str(part) for part in value if str(part).strip())
+    else:
+        raise ValueError(f"{field_name} must be a string or list")
+    if not parts:
+        raise ValueError(f"{field_name} must contain at least one argument")
+    return parts
