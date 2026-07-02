@@ -405,11 +405,15 @@ def _build_chatgpt_prompt(
         "@github",
         f"PR 번호: #{pr_number}",
         f"레포 : {repo}",
+        f"선택된 ChatGPT 실행 모드: {model_name}",
         "일반 PR comment가 아니라 Files changed의 변경 라인에 inline review comment로 직접 남겨",
+        "분석이 끝나기 전에는 중간/부분/임시 리뷰를 게시하지 말고, 최종 결과만 한 번의 GitHub PR review로 제출해.",
+        "여러 번 Submit review 하지 마.",
         "지적 내용은 review body에 쓰지 말고, 각 지적을 변경 라인별 inline comment로 나눠서 남겨.",
-        "inline comment가 있으면 review body에는 모델명만 남겨.",
+        "inline comment가 있으면 review body에는 모델명만 남겨도 되지만, 가능하면 review body 마지막 줄에도 숨김 완료표시를 넣어.",
         f"inline comment가 하나도 없으면 review body에 `확신할 수 있는 인라인 코드리뷰 코멘트 없음.`을 쓰고 마지막 줄에 `{marker}`를 넣어.",
-        f"마지막 inline comment의 마지막 줄에 이 숨김 완료표시를 그대로 넣어: {marker}",
+        f"inline comment가 있으면 최종 제출의 마지막 inline comment 마지막 줄에 이 숨김 완료표시를 그대로 넣어: {marker}",
+        "숨김 완료표시가 GitHub에 실제 게시되지 않으면 시스템이 실패로 보고 재시도하므로, 절대 생략하지 마.",
         "",
     ]
     if instruction not in {"코드리뷰", "코드 리뷰"}:
