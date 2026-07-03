@@ -173,14 +173,13 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
         job.engine,
         job.attempts,
     )
-    final_attempt = job.attempts >= config.job_max_attempts
     try:
         ok = run_review(
             config,
             job.event,
             job.engine,
             job.instruction,
-            post_failure=final_attempt,
+            post_failure=True,
         )
     except Exception:
         LOG.exception("review job crashed repo=%s comment_id=%s", job.repository, job.comment_id)
@@ -192,24 +191,13 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
         return
 
     message = "review marker was not posted"
-    if final_attempt:
-        store.fail_job(job.repository, job.comment_id, message)
-        LOG.error(
-            "failed review job repo=%s comment_id=%s attempts=%s",
-            job.repository,
-            job.comment_id,
-            job.attempts,
-        )
-        return
-
-    delay = config.job_retry_delay_seconds * job.attempts
-    store.retry_job(job.repository, job.comment_id, delay, message)
-    LOG.warning(
-        "retrying review job repo=%s comment_id=%s attempt=%s delay=%ss",
+    store.fail_job(job.repository, job.comment_id, message)
+    LOG.error(
+        "failed review job repo=%s comment_id=%s attempts=%s automatic_retry=%s",
         job.repository,
         job.comment_id,
         job.attempts,
-        delay,
+        False,
     )
 
 

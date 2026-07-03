@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -140,19 +142,19 @@ def run_review(
     marker = f"<!-- ai-pr-review-run:webhook:{comment_id}:{engine} -->"
     review_root = config.work_dir / repo.replace("/", "__")
     review_root.mkdir(parents=True, exist_ok=True)
+    session_title = _opencode_session_title(repo, pr_number, comment_id) if engine == "opencode" else None
 
     if _marker_exists(repo, pr_number, marker):
         return True
 
-    with tempfile.TemporaryDirectory(prefix=f"pr-{pr_number}-{comment_id}-", dir=review_root) as tmp:
-        review_dir = Path(tmp)
+    with _review_workspace(review_root, pr_number, comment_id, engine) as review_dir:
         checkout_dir = review_dir / "checkout"
         log_path = review_dir / "review.log"
         prompt_path = review_dir / "review_prompt.md"
         failure_path = review_dir / "failure_comment.md"
 
         try:
-            _checkout_pr(repo, pr_number, checkout_dir)
+            _checkout_pr(repo, pr_number, checkout_dir, reuse_existing=engine == "opencode")
             head_sha = _run_text(["git", "rev-parse", "HEAD"], cwd=checkout_dir).strip()
             if engine == "claude_p":
                 _trust_claude_workspace(checkout_dir)
@@ -181,6 +183,7 @@ def run_review(
                 review_dir=review_dir,
                 log_path=log_path,
                 run_id=run_id,
+                session_title=session_title,
             )
             if _marker_exists(repo, pr_number, marker):
                 return True
@@ -196,7 +199,22 @@ def run_review(
             return False
 
 
-def _checkout_pr(repo: str, pr_number: int, checkout_dir: Path) -> None:
+@contextmanager
+def _review_workspace(review_root: Path, pr_number: int, comment_id: int, engine: str):
+    if engine == "opencode":
+        review_dir = review_root / f"pr-{pr_number}-{comment_id}-{engine}"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        yield review_dir
+        return
+    with tempfile.TemporaryDirectory(prefix=f"pr-{pr_number}-{comment_id}-", dir=review_root) as tmp:
+        yield Path(tmp)
+
+
+def _checkout_pr(repo: str, pr_number: int, checkout_dir: Path, *, reuse_existing: bool = False) -> None:
+    if reuse_existing and (checkout_dir / ".git").exists():
+        return
+    if checkout_dir.exists():
+        shutil.rmtree(checkout_dir)
     _run(["gh", "repo", "clone", repo, str(checkout_dir), "--", "--depth", "1"])
     pr_ref = f"refs/pull/{pr_number}/head"
     local_ref = f"refs/remotes/origin/pr-{pr_number}"
@@ -413,7 +431,7 @@ def _build_chatgpt_prompt(
         "inline comment가 있으면 review body에는 모델명만 남겨도 되지만, 가능하면 review body 마지막 줄에도 숨김 완료표시를 넣어.",
         f"inline comment가 하나도 없으면 review body에 `확신할 수 있는 인라인 코드리뷰 코멘트 없음.`을 쓰고 마지막 줄에 `{marker}`를 넣어.",
         f"inline comment가 있으면 최종 제출의 마지막 inline comment 마지막 줄에 이 숨김 완료표시를 그대로 넣어: {marker}",
-        "숨김 완료표시가 GitHub에 실제 게시되지 않으면 시스템이 실패로 보고 재시도하므로, 절대 생략하지 마.",
+        "숨김 완료표시가 GitHub에 실제 게시되지 않으면 시스템이 즉시 실패 처리하므로, 절대 생략하지 마.",
         "",
     ]
     if instruction not in {"코드리뷰", "코드 리뷰"}:
@@ -438,8 +456,18 @@ def _run_agent_with_watchdog(
     review_dir: Path,
     log_path: Path,
     run_id: str,
+    session_title: str | None,
 ) -> int:
-    command = _agent_command(config, engine, prompt_path, checkout_dir, review_dir, run_id, config.model_timeout_seconds)
+    command = _agent_command(
+        config,
+        engine,
+        prompt_path,
+        checkout_dir,
+        review_dir,
+        run_id,
+        config.model_timeout_seconds,
+        session_title=session_title,
+    )
     with log_path.open("w", encoding="utf-8", errors="replace") as log:
         if engine in CHATGPT_ENGINES:
             _ensure_chatgpt_browser_ready(config, log)
@@ -493,6 +521,8 @@ def _agent_command(
     review_dir: Path,
     run_id: str,
     timeout_seconds: int,
+    *,
+    session_title: str | None = None,
 ) -> list[str]:
     prompt = prompt_path.read_text(encoding="utf-8")
     if engine == "opencode":
@@ -504,7 +534,15 @@ def _agent_command(
             binary = Path(found)
         if not binary.exists():
             raise RuntimeError("opencode CLI was not found")
-        return [str(binary), "run", prompt]
+        command = [str(binary), "run"]
+        if session_title:
+            command.extend(["--title", session_title])
+            session_id = _find_latest_opencode_session_id(session_title)
+            if session_id:
+                command.extend(["--session", session_id])
+                prompt = _build_opencode_resume_prompt(prompt)
+        command.append(prompt)
+        return command
     if engine in {"codexcli", "codexcli_final"}:
         binary = shutil.which("codex") or str(Path.home() / ".local/bin/codex")
         if not Path(binary).exists():
@@ -706,6 +744,46 @@ def _post_failure(repo: str, pr_number: int, engine: str, marker: str, log_path:
         encoding="utf-8",
     )
     _run(["gh", "pr", "comment", str(pr_number), "--repo", repo, "--body-file", str(failure_path)])
+
+
+def _opencode_session_title(repo: str, pr_number: int, comment_id: int) -> str:
+    repo_name = repo.rsplit("/", 1)[-1]
+    return f"{repo_name} PR #{pr_number} opencode review ({comment_id})"
+
+
+def _find_latest_opencode_session_id(session_title: str) -> str | None:
+    db_path = Path.home() / ".local/share/opencode/opencode.db"
+    if not db_path.exists():
+        return None
+    try:
+        with sqlite3.connect(db_path) as db:
+            row = db.execute(
+                """
+                SELECT id
+                FROM session
+                WHERE title = ?
+                ORDER BY time_updated DESC
+                LIMIT 1
+                """,
+                (session_title,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return str(row[0])
+
+
+def _build_opencode_resume_prompt(prompt: str) -> str:
+    return "\n".join(
+        [
+            "이전 오픈코드 리뷰 세션을 이어서 계속 진행해.",
+            "이미 확인한 diff와 문맥은 반복해서 처음부터 다시 정리하지 말고, 남은 작업만 이어서 끝내.",
+            "새 리뷰를 처음부터 다시 시작하지 말고 현재 세션의 연속 작업으로 처리해.",
+            "",
+            prompt,
+        ]
+    )
 
 
 def _tail(path: Path, lines: int) -> str:
