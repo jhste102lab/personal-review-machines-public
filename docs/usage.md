@@ -38,6 +38,11 @@ PR 열기
 - `@지피티매우높음` → ChatGPT `thinking` + `heavy`
 - `@지피티확장` → ChatGPT `pro` + `extended`
 
+모든 reviewer 실행 프롬프트는 같은 코드 리뷰 지시문을 기준으로 쓰고, 자동 실행에는
+GitHub 게시 위치, 완료 marker, 실패 fallback 같은 최소 운영 지시만 덧붙입니다.
+ChatGPT 경로의 GitHub connector 호출은 `agbrowse --plugin github`가 맡으므로 프롬프트
+본문에 `@github`를 중복 삽입하지 않습니다.
+
 ## Webhook daemon review
 
 현재 권장 경로는 대상 repo에 GitHub webhook을 등록하고, 운영 서버의 daemon이 로컬
