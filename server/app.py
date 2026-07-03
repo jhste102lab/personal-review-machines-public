@@ -179,7 +179,7 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
             job.event,
             job.engine,
             job.instruction,
-            post_failure=True,
+            post_failure=False,
         )
     except Exception:
         LOG.exception("review job crashed repo=%s comment_id=%s", job.repository, job.comment_id)

@@ -59,12 +59,11 @@ PR 열기
   `@오픈코드`는 고정 session title과 persistent workspace를 사용하므로, daemon 재시작 뒤에도 같은
   OpenCode 세션을 이어붙일 수 있으면 같은 session으로 계속 진행합니다. review session title은
   `opencode session list` 최근 목록에도 그대로 보입니다.
-- reviewer 실행 뒤 marker가 게시되지 않으면 자동 재시도 없이 fallback 보존 경로를 시도합니다.
+- reviewer 실행 뒤 marker가 게시되지 않으면 자동 재시도 없이 실패 상태만 DB/log에 기록합니다.
 - marker 포함 inline review comment 또는 PR review body가 기본 성공 경로입니다.
-  둘 다 막히면 marker 포함 일반 PR 대화 댓글로 리뷰 산출물과 로그 tail을 보존하고
-  성공으로 처리합니다.
-- 일반 PR 대화 댓글도 실패하면 reviewer가 marker 없이 채팅 응답에 리뷰 내용을 남기도록
-  지시하고, daemon은 추출 가능한 내용을 log/failure artifact에 보존합니다.
+  reviewer가 marker 포함 일반 PR 대화 댓글을 직접 남긴 경우도 성공으로 처리합니다.
+- daemon은 marker 미확인 실패에 대해 별도 fallback/오류 PR comment를 자동 작성하지 않습니다.
+  세부 원인은 운영 서버의 review log와 reviewer 세션에서 확인합니다.
 - ChatGPT reviewer를 쓰는 경우 운영 서버의 ChatGPT 브라우저 프로필이 이미 로그인되어 있어야 합니다.
 
 ## Legacy private repo mention review

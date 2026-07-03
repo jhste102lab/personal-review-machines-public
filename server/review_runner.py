@@ -133,7 +133,7 @@ def run_review(
     engine: str,
     instruction: str,
     *,
-    post_failure: bool = True,
+    post_failure: bool = False,
 ) -> bool:
     repo = event["repository"]["full_name"]
     pr_number = int(event["issue"]["number"])
