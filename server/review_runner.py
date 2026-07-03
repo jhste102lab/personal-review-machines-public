@@ -30,7 +30,7 @@ ENGINE_MENTIONS = {
 ENGINE_IDENTITIES = {
     "opencode": "@오픈코드 / opencode",
     "chatgpt_high": "@지피티높음 / ChatGPT Thinking High",
-    "chatgpt_xhigh": "@지피티매우높음 / ChatGPT Thinking Very High",
+    "chatgpt_xhigh": "@지피티매우높음 / ChatGPT Extra High",
     "chatgpt_extended": "@지피티확장 / ChatGPT Pro Extended",
     "claude": "@클로드 / claude -p",
     "claude_p": "@클로드-p / claude-p",
@@ -41,7 +41,7 @@ ENGINE_IDENTITIES = {
 ENGINE_MODEL_NAMES = {
     "opencode": "OpenCode GLM-5.2",
     "chatgpt_high": "ChatGPT Thinking High",
-    "chatgpt_xhigh": "ChatGPT Thinking Very High",
+    "chatgpt_xhigh": "ChatGPT Extra High",
     "chatgpt_extended": "ChatGPT Pro Extended",
     "claude": "Claude Opus",
     "claude_p": "Claude Opus",

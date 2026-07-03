@@ -35,7 +35,7 @@ PR 열기
 경로입니다. 현재 기본 매핑은 다음과 같습니다.
 
 - `@지피티높음` → ChatGPT `thinking` + `extended`
-- `@지피티매우높음` → ChatGPT `thinking` + `heavy`
+- `@지피티매우높음` → ChatGPT `thinking` + `heavy` (현재 UI: `Extra High` / `매우 높음`)
 - `@지피티확장` → ChatGPT `pro` + `extended`
 
 모든 reviewer 실행 프롬프트는 같은 코드 리뷰 지시문을 기준으로 쓰고, 자동 실행에는
