@@ -9,6 +9,7 @@ const cdpUrl = args.cdp || process.env.PRM_CDP_URL || `http://127.0.0.1:${proces
 const timeoutMs = Number(args.timeout || 3600) * 1000;
 const fallbackDelayMs = Number(args["fallback-delay"] || 30) * 1000;
 const modelName = args.model || "ChatGPT Pro Extended";
+const reasoningLevel = args["reasoning-level"] || "Pro 확장";
 const cloakDir = process.env.PRM_CLOAK_DIR;
 
 if (!cloakDir) {
@@ -24,12 +25,12 @@ const browser = await chromium.connectOverCDP(cdpUrl);
 try {
   const context = browser.contexts()[0] || await browser.newContext();
   const page = await openChatPage(context, chatgptUrl);
-  await sendPromptWithGithub(page, prompt);
+  await sendPromptWithGithub(page, prompt, reasoningLevel);
   const first = await waitForReviewState(page, fallbackDelayMs);
   console.log(JSON.stringify({ phase: "first-check", ...first }));
 
   if (first.needsFallback) {
-    await sendPromptWithGithub(page, buildFallbackPrompt(prompt));
+    await sendPromptWithGithub(page, buildFallbackPrompt(prompt), reasoningLevel);
     const second = await waitForReviewState(page, Math.max(10_000, timeoutMs - fallbackDelayMs));
     console.log(JSON.stringify({ phase: "fallback-check", ...second }));
     if (second.running) {
@@ -47,7 +48,7 @@ try {
       console.error("ChatGPT was still running after the review timeout.");
       process.exitCode = 124;
     } else if (final.needsFallback) {
-      await sendPromptWithGithub(page, buildFallbackPrompt(prompt));
+      await sendPromptWithGithub(page, buildFallbackPrompt(prompt), reasoningLevel);
       const fallback = await waitForReviewState(page, Math.max(10_000, timeoutMs / 2));
       console.log(JSON.stringify({ phase: "late-fallback-check", ...fallback }));
       if (fallback.running) {
@@ -59,7 +60,7 @@ try {
     }
   }
 
-  console.log(JSON.stringify({ ok: true, model: modelName, url: page.url() }));
+  console.log(JSON.stringify({ ok: true, model: modelName, reasoningLevel, url: page.url() }));
 } finally {
   await browser.close().catch(() => {});
 }
@@ -100,10 +101,11 @@ async function openChatPage(context, url) {
   return page;
 }
 
-async function sendPromptWithGithub(page, message) {
+async function sendPromptWithGithub(page, message, level) {
   const textbox = page.locator("#prompt-textarea").first();
   await textbox.waitFor({ timeout: 20_000 });
   await clearComposer(page, textbox);
+  await selectReasoningLevel(page, level);
   await attachGithubPlugin(page);
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForTimeout(300);
@@ -112,6 +114,24 @@ async function sendPromptWithGithub(page, message) {
   await page.keyboard.insertText(message);
   await page.waitForTimeout(700);
   await page.locator("#composer-submit-button").click({ timeout: 10_000 });
+}
+
+async function selectReasoningLevel(page, level) {
+  if (!level) {
+    return;
+  }
+  const pill = page.locator("button.__composer-pill").last();
+  await pill.waitFor({ timeout: 10_000 });
+  const current = (await pill.innerText().catch(() => "")).trim();
+  if (current === level) {
+    return;
+  }
+
+  await pill.click({ timeout: 5000 });
+  await page.waitForTimeout(600);
+  const option = page.getByText(level, { exact: true }).last();
+  await option.click({ timeout: 5000 });
+  await page.waitForTimeout(700);
 }
 
 async function clearComposer(page, textbox) {

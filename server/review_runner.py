@@ -55,6 +55,11 @@ CHATGPT_MODEL_EFFORTS = {
     "chatgpt_xhigh": ("thinking", "heavy"),
     "chatgpt_extended": ("pro", "extended"),
 }
+CHATGPT_REASONING_LEVELS = {
+    "chatgpt_high": "높음",
+    "chatgpt_xhigh": "매우 높음",
+    "chatgpt_extended": "Pro 확장",
+}
 
 CLAUDE_REVIEW_EFFORT = "high"
 
@@ -532,6 +537,8 @@ def _agent_command(
             str(timeout_seconds),
             "--prompt-file",
             str(prompt_path),
+            "--reasoning-level",
+            CHATGPT_REASONING_LEVELS.get(engine, "Pro 확장"),
             "--fallback-delay",
             "30",
         ]
