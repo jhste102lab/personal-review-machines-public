@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import fcntl
 import json
 import os
 import re
@@ -60,11 +61,13 @@ CHATGPT_REASONING_LEVELS = {
     "chatgpt_xhigh": "매우 높음",
     "chatgpt_extended": "Pro 확장",
 }
-CHATGPT_CDP_URLS = {
-    "chatgpt_high": "http://127.0.0.1:9222",
-    "chatgpt_xhigh": "http://127.0.0.1:9222",
-    "chatgpt_extended": "http://127.0.0.1:9223",
+CHATGPT_CDP_POOLS = {
+    "chatgpt_high": ("http://127.0.0.1:9222", "http://127.0.0.1:9224"),
+    "chatgpt_xhigh": ("http://127.0.0.1:9222", "http://127.0.0.1:9224"),
+    "chatgpt_extended": ("http://127.0.0.1:9223", "http://127.0.0.1:9225"),
 }
+CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+CHATGPT_SLOT_WAIT_SECONDS = 2.0
 
 CLAUDE_REVIEW_EFFORT = "high"
 
@@ -351,55 +354,59 @@ def _run_agent_with_watchdog(
     run_id: str,
     session_title: str | None,
 ) -> int:
-    command = _agent_command(
-        config,
-        engine,
-        prompt_path,
-        checkout_dir,
-        review_dir,
-        run_id,
-        config.model_timeout_seconds,
-        session_title=session_title,
-    )
     with log_path.open("w", encoding="utf-8", errors="replace") as log:
-        if engine in CHATGPT_ENGINES:
-            _ensure_chatgpt_browser_ready(config, log)
-        env = os.environ.copy()
-        if engine in CHATGPT_ENGINES:
-            env["AGBROWSE_RAW_PROMPT"] = "1"
-            env["AGBROWSE_JSON_ERRORS"] = "1"
-        proc = subprocess.Popen(
-            command,
-            cwd=checkout_dir,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            text=True,
-            preexec_fn=os.setsid,
-            env=env,
-        )
-        deadline = time.monotonic() + config.model_timeout_seconds
-        while proc.poll() is None and time.monotonic() < deadline:
-            if _marker_exists(repo, pr_number, marker):
-                time.sleep(config.posted_grace_seconds)
-                _terminate_process_group(proc)
-                return 0
-            time.sleep(config.poll_seconds)
-
-        if proc.poll() is None:
-            settle_deadline = time.monotonic() + config.marker_settle_seconds
-            while time.monotonic() < settle_deadline:
+        chatgpt_slot = _chatgpt_browser_slot(engine, log) if engine in CHATGPT_ENGINES else None
+        with chatgpt_slot or _null_context():
+            cdp_url = chatgpt_slot.cdp_url if chatgpt_slot is not None else None
+            if engine in CHATGPT_ENGINES:
+                _ensure_chatgpt_browser_ready(config, log)
+            command = _agent_command(
+                config,
+                engine,
+                prompt_path,
+                checkout_dir,
+                review_dir,
+                run_id,
+                config.model_timeout_seconds,
+                session_title=session_title,
+                chatgpt_cdp_url=cdp_url,
+            )
+            env = os.environ.copy()
+            if engine in CHATGPT_ENGINES:
+                env["AGBROWSE_RAW_PROMPT"] = "1"
+                env["AGBROWSE_JSON_ERRORS"] = "1"
+            proc = subprocess.Popen(
+                command,
+                cwd=checkout_dir,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                preexec_fn=os.setsid,
+                env=env,
+            )
+            deadline = time.monotonic() + config.model_timeout_seconds
+            while proc.poll() is None and time.monotonic() < deadline:
                 if _marker_exists(repo, pr_number, marker):
                     time.sleep(config.posted_grace_seconds)
                     _terminate_process_group(proc)
                     return 0
                 time.sleep(config.poll_seconds)
-            log.write("\nModel timed out before posting the required marker.\n")
-            _terminate_process_group(proc)
-            return 124
 
-        exit_code = proc.wait()
-        if engine in CHATGPT_ENGINES:
-            return exit_code
+            if proc.poll() is None:
+                settle_deadline = time.monotonic() + config.marker_settle_seconds
+                while time.monotonic() < settle_deadline:
+                    if _marker_exists(repo, pr_number, marker):
+                        time.sleep(config.posted_grace_seconds)
+                        _terminate_process_group(proc)
+                        return 0
+                    time.sleep(config.poll_seconds)
+                log.write("\nModel timed out before posting the required marker.\n")
+                _terminate_process_group(proc)
+                return 124
+
+            exit_code = proc.wait()
+            if engine in CHATGPT_ENGINES:
+                return exit_code
     settle_deadline = time.monotonic() + config.marker_settle_seconds
     while time.monotonic() < settle_deadline:
         if _marker_exists(repo, pr_number, marker):
@@ -407,6 +414,65 @@ def _run_agent_with_watchdog(
         time.sleep(config.poll_seconds)
     return exit_code or 1
 
+
+
+@contextmanager
+def _null_context():
+    yield
+
+
+class _ChatGPTBrowserSlot:
+    def __init__(self, engine: str, log: object) -> None:
+        self.engine = engine
+        self.log = log
+        self.cdp_url = CHATGPT_DEFAULT_CDP_URL
+        self._lock_file = None
+
+    def __enter__(self):
+        self.cdp_url, self._lock_file = _acquire_chatgpt_browser_lock(self.engine, self.log)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._lock_file is None:
+            return
+        try:
+            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._lock_file.close()
+            self._lock_file = None
+
+
+def _chatgpt_browser_slot(engine: str, log: object) -> _ChatGPTBrowserSlot:
+    return _ChatGPTBrowserSlot(engine, log)
+
+
+def _acquire_chatgpt_browser_lock(engine: str, log: object):
+    urls = CHATGPT_CDP_POOLS.get(engine, (CHATGPT_DEFAULT_CDP_URL,))
+    lock_dir = Path(tempfile.gettempdir()) / "personal-review-machines-chatgpt-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    logged_wait = False
+    while True:
+        for url in urls:
+            lock_path = lock_dir / f"{_chatgpt_cdp_lock_name(url)}.lock"
+            lock_file = lock_path.open("a+")
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                lock_file.close()
+                continue
+            log.write(f"ChatGPT browser slot acquired: {url}\n")
+            log.flush()
+            return url, lock_file
+        if not logged_wait:
+            ports = ", ".join(urls)
+            log.write(f"All ChatGPT browser slots are busy for {engine}; waiting: {ports}\n")
+            log.flush()
+            logged_wait = True
+        time.sleep(CHATGPT_SLOT_WAIT_SECONDS)
+
+
+def _chatgpt_cdp_lock_name(url: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", url).strip("_") or "default"
 
 def _agent_command(
     config: Config,
@@ -418,6 +484,7 @@ def _agent_command(
     timeout_seconds: int,
     *,
     session_title: str | None = None,
+    chatgpt_cdp_url: str | None = None,
 ) -> list[str]:
     prompt = prompt_path.read_text(encoding="utf-8")
     if engine == "opencode":
@@ -543,7 +610,7 @@ def _agent_command(
             "--prompt-file",
             str(prompt_path),
             "--cdp",
-            CHATGPT_CDP_URLS.get(engine, "http://127.0.0.1:9222"),
+            chatgpt_cdp_url or CHATGPT_DEFAULT_CDP_URL,
             "--reasoning-level",
             CHATGPT_REASONING_LEVELS.get(engine, "Pro 확장"),
             "--fallback-delay",
