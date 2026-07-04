@@ -60,6 +60,11 @@ CHATGPT_REASONING_LEVELS = {
     "chatgpt_xhigh": "매우 높음",
     "chatgpt_extended": "Pro 확장",
 }
+CHATGPT_CDP_URLS = {
+    "chatgpt_high": "http://127.0.0.1:9222",
+    "chatgpt_xhigh": "http://127.0.0.1:9222",
+    "chatgpt_extended": "http://127.0.0.1:9223",
+}
 
 CLAUDE_REVIEW_EFFORT = "high"
 
@@ -537,6 +542,8 @@ def _agent_command(
             str(timeout_seconds),
             "--prompt-file",
             str(prompt_path),
+            "--cdp",
+            CHATGPT_CDP_URLS.get(engine, "http://127.0.0.1:9222"),
             "--reasoning-level",
             CHATGPT_REASONING_LEVELS.get(engine, "Pro 확장"),
             "--fallback-delay",

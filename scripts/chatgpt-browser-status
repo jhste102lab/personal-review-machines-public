@@ -4,10 +4,17 @@ set -euo pipefail
 VNC_PORT="${PRM_VNC_PORT:-5901}"
 NOVNC_PORT="${PRM_NOVNC_PORT:-6080}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
+EXTRA_CDP_PORTS="${PRM_EXTRA_CDP_PORTS:-9223}"
 DISPLAY_NUM="${PRM_DISPLAY:-:99}"
 
 printf 'CDP: '
 curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1 && echo up || echo down
+for EXTRA_CDP_PORT in $EXTRA_CDP_PORTS; do
+  if [ -n "$EXTRA_CDP_PORT" ] && [ "$EXTRA_CDP_PORT" != "$CDP_PORT" ]; then
+    printf 'CDP %s: ' "${EXTRA_CDP_PORT}"
+    curl -fsS "http://127.0.0.1:${EXTRA_CDP_PORT}/json/version" >/dev/null 2>&1 && echo up || echo down
+  fi
+done
 printf 'VNC %s: ' "${VNC_PORT}"
 ss -ltn "( sport = :${VNC_PORT} )" | tail -n +2 | grep -q . && echo up || echo down
 printf 'noVNC %s: ' "${NOVNC_PORT}"
