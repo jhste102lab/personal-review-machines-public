@@ -4,7 +4,7 @@ GitHub repo들의 AI PR 리뷰 요청을 운영 서버에서 처리하는 webhoo
 
 기본 구조는 GitHub Actions self-hosted runner를 늘리지 않습니다. 각 대상 repo에
 GitHub webhook만 설치하고, 이 서버의 daemon이 `issue_comment` 이벤트를 받아 로컬
-`gh`, `opencode`, `agbrowse(ChatGPT)`, `claude`, `claude-p`, `codex`로 리뷰를 실행한 뒤 원 PR에 댓글을 답니다.
+`gh`, `opencode`, `ChatGPT 웹 UI(CloakBrowser)`, `claude`, `claude-p`, `codex`로 리뷰를 실행한 뒤 원 PR에 댓글을 답니다.
 다른 repo들은 이 repo의 workflow를 호출하는 것이 아니라, 같은 webhook
 endpoint를 등록해서 사용합니다.
 
@@ -17,7 +17,7 @@ PR 댓글 생성
 -> repo allowlist + author_association 정책 확인
 -> @오픈코드 / @지피티높음 / @지피티매우높음 / @지피티확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
 -> gh로 PR context/diff/최근 댓글/리뷰 수집
--> 로컬 opencode/agbrowse(ChatGPT)/claude/claude-p/codex 실행
+-> 로컬 opencode/ChatGPT 웹 UI(CloakBrowser)/claude/claude-p/codex 실행
 -> marker 포함 inline review comment, PR review body, 또는 일반 PR comment가 실제 게시됐는지 확인
 -> 게시 확인 실패 시 자동 PR comment 없이 DB/log에 실패 기록
 ```
@@ -115,7 +115,7 @@ sudo systemctl restart personal-review-machines.service
 ```bash
 gh auth status
 opencode --version
-agbrowse --help
+scripts/chatgpt-browser-status
 claude --version
 claude-p --version
 codex --version

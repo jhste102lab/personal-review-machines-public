@@ -58,7 +58,7 @@ sudo apt-get install -y xvfb x11vnc novnc websockify chromium-browser || sudo ap
 curl -sS http://127.0.0.1:18080/health
 gh auth status
 opencode --version
-agbrowse --help
+scripts/chatgpt-browser-status
 claude --version
 claude-p --version
 codex --version

@@ -2,24 +2,19 @@
 set -euo pipefail
 
 if [ "$#" -lt 3 ]; then
-  echo "usage: chatgpt-pr-smoke <repo> <pr_number> <marker> [model] [effort]" >&2
+  echo "usage: chatgpt-pr-smoke <repo> <pr_number> <marker> [reasoning-level]" >&2
   exit 2
 fi
 
 REPO="$1"
 PR="$2"
 MARKER="$3"
-MODEL="${4:-thinking}"
-EFFORT="${5:-extended}"
-CHATGPT_URL="${PRM_CHATGPT_URL:-https://chatgpt.com/}"
-USER_HOME="${PRM_HOME_OVERRIDE:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
-if [ -z "${USER_HOME}" ]; then
-  USER_HOME="${HOME:-/tmp}"
-fi
-export BROWSER_AGENT_HOME="${BROWSER_AGENT_HOME:-$USER_HOME/.browser-agent}"
+REASONING_LEVEL="${4:-Pro 확장}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROMPT_FILE="$(mktemp)"
+trap 'rm -f "$PROMPT_FILE"' EXIT
 
-PROMPT=$(cat <<PROMPT
-@github
+cat > "$PROMPT_FILE" <<PROMPT
 PR 번호: #$PR
 Git repo: $REPO
 
@@ -28,16 +23,10 @@ Git repo: $REPO
 본문 끝에 아래 marker를 그대로 한 줄로 넣어.
 $MARKER
 PROMPT
-)
 
-AGBROWSE_JSON_ERRORS=1 agbrowse web-ai query \
-  --vendor chatgpt \
-  --url "$CHATGPT_URL" \
-  --model "$MODEL" \
-  --effort "$EFFORT" \
-  --plugin github \
-  --inline-only \
+"$SCRIPT_DIR/chatgpt-github-review" \
+  --url "${PRM_CHATGPT_URL:-https://chatgpt.com/}" \
   --timeout 3600 \
-  --allow-copy-markdown-fallback \
-  --prompt "$PROMPT" \
-  --json
+  --prompt-file "$PROMPT_FILE" \
+  --reasoning-level "$REASONING_LEVEL" \
+  --fallback-delay 30

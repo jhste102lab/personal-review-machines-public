@@ -30,23 +30,20 @@ PR 열기
 판단합니다. 연결 이슈, PR 본문/코멘트/리뷰, 관련 repo와 운영 맥락을 읽기
 전용으로 확인하고 blocker와 non-blocking note를 구분합니다.
 
-`@지피티높음`, `@지피티매우높음`, `@지피티확장`은 운영 서버의 headed Chromium +
-`agbrowse`로 ChatGPT 웹 UI를 열고 GitHub 연동으로 직접 PR 댓글을 남기는
-경로입니다. 현재 기본 매핑은 다음과 같습니다.
+`@지피티높음`, `@지피티매우높음`, `@지피티확장`은 운영 서버의 CloakBrowser 기반 ChatGPT 웹 UI와 GitHub 앱 연동으로 직접 PR 리뷰를 요청하는 경로입니다. 현재 기본 매핑은 다음과 같습니다.
 
-- `@지피티높음` → ChatGPT `thinking` + `extended`
-- `@지피티매우높음` → ChatGPT `thinking` + `heavy` (현재 UI: `Extra High` / `매우 높음`)
-- `@지피티확장` → ChatGPT `pro` + `extended`
+- `@지피티높음` → ChatGPT 추론 수준 `높음`
+- `@지피티매우높음` → CDP `9222`, ChatGPT 추론 수준 `매우 높음`
+- `@지피티확장` → CDP `9223`, ChatGPT 추론 수준 `Pro 확장`
 
 모든 reviewer 실행 프롬프트는 같은 코드 리뷰 지시문을 기준으로 쓰고, 자동 실행에는
 GitHub 게시 위치, 완료 marker, 실패 fallback 같은 최소 운영 지시만 덧붙입니다.
-ChatGPT 경로의 GitHub connector 호출은 `agbrowse --plugin github`가 맡으므로 프롬프트
-본문에 `@github`를 중복 삽입하지 않습니다.
+ChatGPT 경로는 전송 전 composer에서 GitHub 앱을 attach하고, 30초 후 응답 handoff가 비정상이면 같은 채팅에 GitHub 앱을 다시 attach한 fallback을 보냅니다.
 
 ## Webhook daemon review
 
 현재 권장 경로는 대상 repo에 GitHub webhook을 등록하고, 운영 서버의 daemon이 로컬
-`gh`, `opencode`, `agbrowse`, `claude`, `claude-p`, `codex` 인증으로 리뷰를 수행하는 방식입니다. 자세한
+`gh`, `opencode`, ChatGPT 웹 UI(CloakBrowser), `claude`, `claude-p`, `codex` 인증으로 리뷰를 수행하는 방식입니다. 자세한
 설치는 `docs/webhook-setup.md`를 따릅니다.
 
 기본 조건:
