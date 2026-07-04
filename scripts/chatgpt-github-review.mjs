@@ -10,6 +10,7 @@ const timeoutMs = Number(args.timeout || 3600) * 1000;
 const fallbackDelayMs = Number(args["fallback-delay"] || 30) * 1000;
 const modelName = args.model || "ChatGPT Pro Extended";
 const reasoningLevel = args["reasoning-level"] || "Pro 확장";
+const forceFallbackAfterDelay = args["force-fallback-after-delay"] === "1";
 const cloakDir = process.env.PRM_CLOAK_DIR;
 
 if (!cloakDir) {
@@ -29,7 +30,10 @@ try {
   const first = await waitForReviewState(page, fallbackDelayMs);
   console.log(JSON.stringify({ phase: "first-check", ...first }));
 
-  if (first.needsFallback) {
+  if (forceFallbackAfterDelay || first.needsFallback) {
+    if (forceFallbackAfterDelay && first.running) {
+      await stopRunningResponse(page);
+    }
     await sendPromptWithGithub(page, buildFallbackPrompt(prompt), reasoningLevel);
     const second = await waitForReviewState(page, Math.max(10_000, timeoutMs - fallbackDelayMs));
     console.log(JSON.stringify({ phase: "fallback-check", ...second }));
@@ -114,6 +118,14 @@ async function sendPromptWithGithub(page, message, level) {
   await page.keyboard.insertText(message);
   await page.waitForTimeout(700);
   await page.locator("#composer-submit-button").click({ timeout: 10_000 });
+}
+
+async function stopRunningResponse(page) {
+  const stopButton = page.locator("#composer-submit-button[aria-label='답변 중지']").first();
+  if (await stopButton.count().catch(() => 0)) {
+    await stopButton.click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+  }
 }
 
 async function selectReasoningLevel(page, level) {

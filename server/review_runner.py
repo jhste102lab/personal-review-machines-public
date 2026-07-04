@@ -548,7 +548,7 @@ def _agent_command(
             CHATGPT_REASONING_LEVELS.get(engine, "Pro 확장"),
             "--fallback-delay",
             "30",
-        ]
+        ] + (["--force-fallback-after-delay", "1"] if engine == "chatgpt_extended" else [])
     raise RuntimeError(f"Unknown review engine: {engine}")
 
 
