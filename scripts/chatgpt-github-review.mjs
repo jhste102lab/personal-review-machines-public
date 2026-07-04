@@ -109,8 +109,8 @@ async function sendPromptWithGithub(page, message, level) {
   const textbox = page.locator("#prompt-textarea").first();
   await textbox.waitFor({ timeout: 20_000 });
   await clearComposer(page, textbox);
-  await selectReasoningLevel(page, level);
   await attachGithubPlugin(page);
+  await selectReasoningLevel(page, level);
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForTimeout(300);
   await textbox.click({ timeout: 5000 });
