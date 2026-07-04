@@ -187,6 +187,8 @@ def run_review(
             )
             if _marker_exists(repo, pr_number, marker):
                 return True
+            if engine in CHATGPT_ENGINES and exit_code == 0:
+                return True
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
                 log.write(f"\nAgent exited with code {exit_code}, but the required marker was not posted.\n")
             if post_failure and _post_failure(repo, pr_number, engine, marker, review_dir, log_path, failure_path):
@@ -264,6 +266,18 @@ def _build_unified_review_prompt(
     model_name: str,
 ) -> str:
     template = _load_prompt_template("chatgpt-github-review-ko.md")
+    if engine in CHATGPT_ENGINES:
+        lines = [
+            f"PR 번호: #{pr_number}",
+            f"Git repo: {repo}",
+            "",
+            template,
+            "",
+        ]
+        if instruction not in {"코드리뷰", "코드 리뷰"}:
+            lines.extend(["추가 요청:", instruction, ""])
+        return "\n".join(lines)
+
     lines = [
         model_name,
         f"PR 번호: #{pr_number}",
@@ -283,13 +297,6 @@ def _build_unified_review_prompt(
         "파일 수정, 커밋, 푸시, 머지, 라벨 변경, 워크플로우 재실행/취소 금지.",
         "PR code 실행, build, test, install 금지.",
     ]
-    if engine in CHATGPT_ENGINES:
-        lines.extend(
-            [
-                "ChatGPT GitHub connector/tool로 PR을 확인하고 게시한다.",
-                "프롬프트에 GitHub 도구 호출 토큰을 중복해서 추가하지 않는다.",
-            ]
-        )
     if review_dir is not None:
         lines.extend(
             [
@@ -381,6 +388,8 @@ def _run_agent_with_watchdog(
             return 124
 
         exit_code = proc.wait()
+        if engine in CHATGPT_ENGINES:
+            return exit_code
     settle_deadline = time.monotonic() + config.marker_settle_seconds
     while time.monotonic() < settle_deadline:
         if _marker_exists(repo, pr_number, marker):
@@ -508,32 +517,23 @@ def _agent_command(
             str(raw_log),
         ]
     if engine in CHATGPT_ENGINES:
-        binary = shutil.which("agbrowse") or str(Path.home() / ".local/node/bin/agbrowse")
+        binary = shutil.which("chatgpt-github-review") or str(
+            Path(__file__).resolve().parent.parent / "scripts" / "chatgpt-github-review"
+        )
         if not Path(binary).exists():
-            raise RuntimeError("agbrowse CLI was not found")
-        model, effort = CHATGPT_MODEL_EFFORTS[engine]
+            raise RuntimeError("chatgpt-github-review CLI was not found")
         return [
-            binary,
-            "web-ai",
-            "query",
-            "--vendor",
-            "chatgpt",
+            str(binary),
             "--url",
             config.chatgpt_url,
             "--model",
-            model,
-            "--effort",
-            effort,
-            "--plugin",
-            "github",
-            "--parallel",
-            "--inline-only",
-            "--allow-copy-markdown-fallback",
+            ENGINE_MODEL_NAMES.get(engine, engine),
             "--timeout",
             str(timeout_seconds),
-            "--prompt",
-            prompt,
-            "--json",
+            "--prompt-file",
+            str(prompt_path),
+            "--fallback-delay",
+            "30",
         ]
     raise RuntimeError(f"Unknown review engine: {engine}")
 

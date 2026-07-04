@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: chatgpt-install-cloak-deps <install-dir>" >&2
+  exit 2
+fi
+
+CLOAK_DIR="$1"
+mkdir -p "$CLOAK_DIR"
+
+if [ -d "$CLOAK_DIR/node_modules/cloakbrowser" ] && [ -d "$CLOAK_DIR/node_modules/playwright-core" ]; then
+  exit 0
+fi
+
+cat > "$CLOAK_DIR/package.json" <<'JSON'
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "cloakbrowser": "0.4.7",
+    "playwright-core": "^1.57.0"
+  }
+}
+JSON
+
+npm --prefix "$CLOAK_DIR" install --omit=dev

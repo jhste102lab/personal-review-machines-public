@@ -9,4 +9,5 @@ DISPLAY_NUM="${PRM_DISPLAY:-:99}"
 pkill -f "^.*websockify .*${NOVNC_PORT} .*${VNC_PORT}" || true
 pkill -f "^x11vnc .* -rfbport ${VNC_PORT}( |$)" || true
 pkill -f "^Xvfb ${DISPLAY_NUM}( |$)" || true
+pkill -f "chatgpt-cloak-launch\\.mjs" || true
 pkill -f "remote-debugging-port=${CDP_PORT}" || true

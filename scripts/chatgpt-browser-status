@@ -12,4 +12,4 @@ printf 'VNC %s: ' "${VNC_PORT}"
 ss -ltn "( sport = :${VNC_PORT} )" | tail -n +2 | grep -q . && echo up || echo down
 printf 'noVNC %s: ' "${NOVNC_PORT}"
 ss -ltn "( sport = :${NOVNC_PORT} )" | tail -n +2 | grep -q . && echo up || echo down
-ps -ef | grep -E "Xvfb ${DISPLAY_NUM}|x11vnc .*${VNC_PORT}|websockify .*${NOVNC_PORT}|remote-debugging-port=${CDP_PORT}" | grep -v grep || true
+ps -ef | grep -E "Xvfb ${DISPLAY_NUM}|x11vnc .*${VNC_PORT}|websockify .*${NOVNC_PORT}|chatgpt-cloak-launch|remote-debugging-port=${CDP_PORT}" | grep -v grep || true

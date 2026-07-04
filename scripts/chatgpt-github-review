@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USER_HOME="${PRM_HOME_OVERRIDE:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+if [ -z "${USER_HOME}" ]; then
+  USER_HOME="${HOME:-/tmp}"
+fi
+CLOAK_DIR="${PRM_CLOAK_DIR:-$USER_HOME/.local/share/personal-review-machines/cloakbrowser}"
+
+"$SCRIPT_DIR/chatgpt-install-cloak-deps" "$CLOAK_DIR" >/dev/null
+
+export PRM_CLOAK_DIR="$CLOAK_DIR"
+exec node "$SCRIPT_DIR/chatgpt-github-review.mjs" "$@"
