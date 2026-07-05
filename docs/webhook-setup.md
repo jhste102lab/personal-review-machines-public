@@ -58,7 +58,7 @@ review service를 호출하는 것은 허용하지 않습니다.
 - event repository가 fork repo가 아님
 - 댓글이 PR issue comment임
 - 댓글 작성자의 `author_association`이 repo별 허용 목록에 있음
-- 댓글이 `@오픈코드`, `@지피티높음`, `@지피티매우높음`, `@지피티확장`, `@클로드`, `@클로드-p`, `@코덱스`, `@최종리뷰`로 시작함
+- 댓글이 `@glm`, `@미니맥스`, `@딥시크`, `@지피티높음`, `@지피티매우높음`, `@지피티확장`, `@클로드`, `@클로드-p`, `@코덱스`, `@최종리뷰`로 시작함
 
 PR head checkout은 base repo의 `refs/pull/<number>/head`를 사용합니다. fork
 repo의 secret이나 Actions 권한은 사용하지 않습니다.
@@ -84,7 +84,9 @@ curl -sS http://127.0.0.1:18080/health
 Then open a small PR in an allowed repo and comment:
 
 ```text
-@오픈코드 리뷰해줘
+@glm 리뷰해줘
+@미니맥스 리뷰해줘
+@딥시크 리뷰해줘
 @지피티높음 리뷰해줘
 @지피티매우높음 리뷰해줘
 @지피티확장 리뷰해줘

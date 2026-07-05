@@ -15,7 +15,7 @@ PR 댓글 생성
 -> GitHub webhook이 운영 서버 endpoint 호출
 -> HMAC signature 검증
 -> repo allowlist + author_association 정책 확인
--> @오픈코드 / @지피티높음 / @지피티매우높음 / @지피티확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
+-> @glm / @미니맥스 / @딥시크 / @지피티높음 / @지피티매우높음 / @지피티확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
 -> gh로 PR context/diff/최근 댓글/리뷰 수집
 -> 로컬 opencode/ChatGPT 웹 UI(CloakBrowser)/claude/claude-p/codex 실행
 -> marker 포함 inline review comment, PR review body, 또는 일반 PR comment가 실제 게시됐는지 확인
@@ -26,8 +26,9 @@ PR 댓글 생성
 owner가 PR 댓글 첫머리에 아래 멘션을 남길 때만 실행합니다.
 
 ```text
-@오픈코드 리뷰해줘
-@오픈코드 동시성 문제 중심으로 봐
+@glm 리뷰해줘
+@미니맥스 리뷰해줘
+@딥시크 동시성 문제 중심으로 봐
 @지피티높음 리뷰해줘
 @지피티매우높음 리뷰해줘
 @지피티확장 리뷰해줘
@@ -169,7 +170,7 @@ nginx나 터널은 `/github-webhook` 요청을 `http://127.0.0.1:18080/github-we
   wrapper가 필요한 옵션과 제한된 read/write/gh shell 명령으로 실행합니다.
   `Write`는 review dir 아래 리뷰 코멘트 markdown 작성용이고, checkout 파일
   변경은 금지합니다.
-- `opencode`, `claude`, `claude-p`, `codex` 모두 marker 포함 inline review comment,
+- `opencode`, `claude`, `claude-p`, `codex` 모두 모델명을 첫 줄에 적고 marker 포함 inline review comment,
   PR review body, 또는 일반 PR comment가 실제로 게시되어야 성공입니다.
 
 ## Legacy Workflows

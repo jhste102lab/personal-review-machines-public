@@ -60,7 +60,7 @@ webhook daemon 동작을 검증합니다.
 1. target repo PR 댓글 첫머리에 아래 멘션을 남깁니다.
 
 ```text
-@오픈코드 리뷰해줘
+@glm 리뷰해줘
 ```
 
 2. 필요하면 Codex 경로도 별도 댓글로 확인합니다.

@@ -18,7 +18,9 @@ from .config import Config
 
 
 ENGINE_MENTIONS = {
-    "오픈코드": "opencode",
+    "glm": "opencode_glm",
+    "미니맥스": "opencode_minimax",
+    "딥시크": "opencode_deepseek",
     "지피티높음": "chatgpt_high",
     "지피티매우높음": "chatgpt_xhigh",
     "지피티확장": "chatgpt_extended",
@@ -29,7 +31,9 @@ ENGINE_MENTIONS = {
 }
 
 ENGINE_IDENTITIES = {
-    "opencode": "@오픈코드 / opencode",
+    "opencode_glm": "@glm / OpenCode GLM",
+    "opencode_minimax": "@미니맥스 / OpenCode MiniMax",
+    "opencode_deepseek": "@딥시크 / OpenCode DeepSeek",
     "chatgpt_high": "@지피티높음 / ChatGPT Thinking High",
     "chatgpt_xhigh": "@지피티매우높음 / ChatGPT Extra High",
     "chatgpt_extended": "@지피티확장 / ChatGPT Pro Extended",
@@ -40,7 +44,9 @@ ENGINE_IDENTITIES = {
 }
 
 ENGINE_MODEL_NAMES = {
-    "opencode": "OpenCode GLM-5.2",
+    "opencode_glm": "GLM 5.2 max",
+    "opencode_minimax": "MiniMax M3 thinking",
+    "opencode_deepseek": "DeepSeek V4 Pro max",
     "chatgpt_high": "ChatGPT Thinking High",
     "chatgpt_xhigh": "ChatGPT Extra High",
     "chatgpt_extended": "ChatGPT Pro Extended",
@@ -50,6 +56,12 @@ ENGINE_MODEL_NAMES = {
     "codexcli_final": "Codex XHigh",
 }
 
+OPENCODE_MODELS = {
+    "opencode_glm": ("opencode-go/glm-5.2", "max"),
+    "opencode_minimax": ("opencode-go/minimax-m3", "thinking"),
+    "opencode_deepseek": ("opencode-go/deepseek-v4-pro", "max"),
+}
+OPENCODE_ENGINES = frozenset(OPENCODE_MODELS)
 CHATGPT_ENGINES = frozenset({"chatgpt_high", "chatgpt_xhigh", "chatgpt_extended"})
 CHATGPT_MODEL_EFFORTS = {
     "chatgpt_high": ("thinking", "extended"),
@@ -130,7 +142,7 @@ CLAUDE_ALLOWED_TOOLS = [
 
 
 def parse_request(body: str) -> tuple[str, str] | None:
-    match = re.match(r"^\s*@(?P<engine>오픈코드|지피티매우높음|지피티높음|지피티확장|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
+    match = re.match(r"^\s*@(?P<engine>glm|미니맥스|딥시크|지피티매우높음|지피티높음|지피티확장|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
     if not match:
         return None
     # The mention is Korean, but the "-p" suffix may arrive as "-P" under re.I.
@@ -155,7 +167,7 @@ def run_review(
     marker = f"<!-- ai-pr-review-run:webhook:{comment_id}:{engine} -->"
     review_root = config.work_dir / repo.replace("/", "__")
     review_root.mkdir(parents=True, exist_ok=True)
-    session_title = _opencode_session_title(repo, pr_number, comment_id) if engine == "opencode" else None
+    session_title = _opencode_session_title(repo, pr_number, comment_id, engine) if engine in OPENCODE_ENGINES else None
 
     if _marker_exists(repo, pr_number, marker):
         return True
@@ -167,7 +179,7 @@ def run_review(
         failure_path = review_dir / "failure_comment.md"
 
         try:
-            _checkout_pr(repo, pr_number, checkout_dir, reuse_existing=engine == "opencode")
+            _checkout_pr(repo, pr_number, checkout_dir, reuse_existing=engine in OPENCODE_ENGINES)
             head_sha = _run_text(["git", "rev-parse", "HEAD"], cwd=checkout_dir).strip()
             if engine == "claude_p":
                 _trust_claude_workspace(checkout_dir)
@@ -216,7 +228,7 @@ def run_review(
 
 @contextmanager
 def _review_workspace(review_root: Path, pr_number: int, comment_id: int, engine: str):
-    if engine == "opencode":
+    if engine in OPENCODE_ENGINES:
         review_dir = review_root / f"pr-{pr_number}-{comment_id}-{engine}"
         review_dir.mkdir(parents=True, exist_ok=True)
         yield review_dir
@@ -238,7 +250,7 @@ def _checkout_pr(repo: str, pr_number: int, checkout_dir: Path, *, reuse_existin
 
 
 def _review_write_dir(engine: str, review_dir: Path, checkout_dir: Path) -> Path:
-    if engine == "opencode":
+    if engine in OPENCODE_ENGINES:
         return checkout_dir / ".ai-review"
     return review_dir
 
@@ -281,8 +293,12 @@ def _build_unified_review_prompt(
     template = _load_prompt_template("chatgpt-github-review-ko.md")
     if engine in CHATGPT_ENGINES:
         lines = [
+            model_name,
             f"PR 번호: #{pr_number}",
             f"Git repo: {repo}",
+            f"선택된 실행 모드: {model_name}",
+            "",
+            f"GitHub에 게시하는 모든 PR review body, 일반 PR comment, inline review comment body의 첫 줄은 반드시 `{model_name}`만 쓴다.",
             "",
             template,
             "",
@@ -306,6 +322,7 @@ def _build_unified_review_prompt(
         "확신할 수 있는 지적이 없으면 inline comment 없이 PR review body에 모델명, `확신할 수 있는 인라인 코드리뷰 코멘트 없음.`, 완료 marker만 남긴다.",
         "GitHub inline review 또는 PR review body 제출이 막히면 일반 PR comment에 모델명, 리뷰 내용, 완료 marker를 남긴다.",
         "GitHub 게시가 모두 실패하면 marker 없이 채팅 응답에 모델명과 리뷰 내용만 남긴다.",
+        f"GitHub에 게시하는 모든 PR review body, 일반 PR comment, inline review comment body의 첫 줄은 반드시 `{model_name}`만 쓴다.",
         f"완료 marker는 GitHub에 실제 게시하는 마지막 리뷰/댓글에만 넣는다: {marker}",
         "파일 수정, 커밋, 푸시, 머지, 라벨 변경, 워크플로우 재실행/취소 금지.",
         "PR code 실행, build, test, install 금지.",
@@ -487,7 +504,7 @@ def _agent_command(
     chatgpt_cdp_url: str | None = None,
 ) -> list[str]:
     prompt = prompt_path.read_text(encoding="utf-8")
-    if engine == "opencode":
+    if engine in OPENCODE_ENGINES:
         binary = Path.home() / ".opencode/bin/opencode"
         if not binary.exists():
             found = shutil.which("opencode")
@@ -496,7 +513,8 @@ def _agent_command(
             binary = Path(found)
         if not binary.exists():
             raise RuntimeError("opencode CLI was not found")
-        command = [str(binary), "run"]
+        model, variant = OPENCODE_MODELS[engine]
+        command = [str(binary), "run", "--model", model, "--variant", variant]
         if session_title:
             command.extend(["--title", session_title])
             session_id = _find_latest_opencode_session_id(session_title)
@@ -699,6 +717,8 @@ def _post_failure(
     failure_path.write_text(
         "\n".join(
             [
+                model_name,
+                "",
                 f"### AI PR Review ({reviewer_identity}) - fallback",
                 "",
                 "인라인/PR review 게시 확인에 실패해서 일반 PR comment로 리뷰 산출물을 보존합니다.",
@@ -816,9 +836,9 @@ def _extract_chatgpt_artifact_markdown(log_path: Path, marker: str) -> str:
     return "\n".join(["#### Preserved ChatGPT response", "", best]).strip()
 
 
-def _opencode_session_title(repo: str, pr_number: int, comment_id: int) -> str:
+def _opencode_session_title(repo: str, pr_number: int, comment_id: int, engine: str) -> str:
     repo_name = repo.rsplit("/", 1)[-1]
-    return f"{repo_name} PR #{pr_number} opencode review ({comment_id})"
+    return f"{repo_name} PR #{pr_number} {engine} review ({comment_id})"
 
 
 def _find_latest_opencode_session_id(session_title: str) -> str | None:
