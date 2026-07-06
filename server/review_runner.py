@@ -512,7 +512,7 @@ def _agent_command(
         if not binary.exists():
             raise RuntimeError("opencode CLI was not found")
         model, variant = OPENCODE_MODELS[engine]
-        command = [str(binary), "run", "--model", model, "--variant", variant]
+        command = [str(binary), "run", "--auto", "--model", model, "--variant", variant]
         if session_title:
             command.extend(["--title", session_title])
             session_id = _find_latest_opencode_session_id(session_title)
