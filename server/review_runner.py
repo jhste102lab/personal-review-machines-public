@@ -293,12 +293,10 @@ def _build_unified_review_prompt(
     template = _load_prompt_template("chatgpt-github-review-ko.md")
     if engine in CHATGPT_ENGINES:
         lines = [
-            model_name,
             f"PR 번호: #{pr_number}",
             f"Git repo: {repo}",
-            f"선택된 실행 모드: {model_name}",
             "",
-            f"GitHub에 게시하는 모든 PR review body, 일반 PR comment, inline review comment body의 첫 줄은 반드시 `{model_name}`만 쓴다.",
+            "GitHub에 게시하는 모든 PR review body, 일반 PR comment, inline review comment body의 첫 줄은 반드시 `ChatGPT`만 쓴다.",
             "",
             template,
             "",
