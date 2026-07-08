@@ -78,6 +78,8 @@ jobs:
           - Concurrency and race conditions.
           - Unclear business logic.
           - Unnecessary complexity when it hides real bugs.
+          - Multiple automated review jobs may run at the same time and the PR may receive more than one review. Do not treat that as an error or call it out unnecessarily; only use existing review context to avoid duplicate findings.
+          - Keep reviewer, worker, and model labels to the minimum required by the workflow.
           - Avoid minor style nitpicks unless they hide real problems.
 
           Output:

@@ -347,6 +347,8 @@ jobs:
           Review focus:
           - Correctness, regressions, security problems, broken edge cases, and missing tests.
           - Data loss risks, breaking changes, concurrency/race conditions, and unclear business logic.
+          - Multiple automated review jobs may run at the same time and the PR may receive more than one review. Do not treat that as an error or call it out unnecessarily; only use existing review context to avoid duplicate findings.
+          - Keep reviewer, worker, and model labels to the minimum required by the workflow.
           - Do not comment on style-only issues unless the user explicitly asks for style review or style hides a real bug.
 
           Output:
