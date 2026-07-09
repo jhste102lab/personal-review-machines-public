@@ -1,7 +1,7 @@
 [Unit]
 Description=Sync Personal Review Machines GitHub webhooks
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target personal-review-machines.service
+After=network-online.target personal-review-machines.service
 
 [Service]
 Type=oneshot
