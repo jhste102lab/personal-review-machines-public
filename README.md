@@ -40,6 +40,10 @@ owner가 PR 댓글 첫머리에 아래 멘션을 남길 때만 실행합니다.
 public/private repo 모두 기본 호출자 정책은 `OWNER`입니다. org repo처럼 운영상
 필요한 경우 repo별로 `MEMBER`/`COLLABORATOR`를 추가 허용할 수 있습니다.
 
+같은 작성자가 같은 PR에서 reviewer 멘션을 남긴 뒤 5분 안에 단독 `코드리뷰`
+또는 `코드 리뷰` 댓글을 추가하면, 그 댓글도 직전 reviewer 엔진을 상속해 별도
+review job으로 실행합니다. 즉 댓글 3개면 comment id별로 3개 job이 큐잉됩니다.
+
 ## Repository Shape
 
 ```text

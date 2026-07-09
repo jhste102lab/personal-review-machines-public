@@ -27,6 +27,10 @@ PR 열기
 @최종리뷰
 ```
 
+같은 작성자가 같은 PR에서 reviewer 멘션을 남긴 뒤 5분 안에 단독 `코드리뷰`
+또는 `코드 리뷰` 댓글을 추가하면, 그 댓글도 직전 reviewer 엔진을 상속해 별도
+review job으로 실행됩니다. 여러 번 호출하려면 댓글을 여러 개 만들면 됩니다.
+
 `@최종리뷰`는 Codex를 더 높은 reasoning effort로 실행해 merge readiness를
 판단합니다. 연결 이슈, PR 본문/코멘트/리뷰, 관련 repo와 운영 맥락을 읽기
 전용으로 확인하고 blocker와 non-blocking note를 구분합니다.
