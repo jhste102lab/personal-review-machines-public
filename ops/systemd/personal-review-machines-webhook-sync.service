@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync Personal Review Machines GitHub webhooks
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=review
+Environment=HOME=/home/review
+Environment=PATH=/home/review/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
+WorkingDirectory=/opt/personal-review-machines
+ExecStart=/usr/bin/python3 scripts/sync-webhooks.py --config /etc/personal-review-machines/config.json --fix --ping

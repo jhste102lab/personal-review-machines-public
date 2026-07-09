@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Personal Review Machines webhook sync every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

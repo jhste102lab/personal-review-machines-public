@@ -28,6 +28,18 @@ sudo systemctl restart personal-review-machines.service
 `--url`을 생략하면 `config.json`의 `webhook_url`을 payload URL로 사용합니다.
 이미 allowlist에 있는 repo라면 webhook만 설치하거나 중복 여부를 확인합니다.
 실제 payload URL과 secret은 tracked 문서가 아니라 로컬 `config.json`에만 둡니다.
+
+운영 서버에서는 allowlist 전체를 현재 config와 맞추는 sync 명령을 사용할 수 있습니다.
+`--fix`는 누락/불일치 webhook을 만들거나 고치고, `--ping`은 GitHub delivery가
+`202 OK`를 받는지 확인합니다.
+
+```bash
+scripts/sync-webhooks.py --config /etc/personal-review-machines/config.json --fix --ping
+```
+
+30분마다 자동으로 보정하려면 `ops/systemd/personal-review-machines-webhook-sync.timer`를
+설치합니다.
+
 예를 들어 org repo 카나리아를 전환할 때는 실제 운영 secret을 문서에 쓰지
 말고 아래처럼 allowlist shape만 확인합니다.
 

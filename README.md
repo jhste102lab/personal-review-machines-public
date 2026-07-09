@@ -127,9 +127,20 @@ codex --version
 ```bash
 sudo install -m 644 ops/systemd/personal-review-machines.service /etc/systemd/system/personal-review-machines.service
 sudo install -m 644 ops/systemd/personal-review-machines-chatgpt-browser.service /etc/systemd/system/personal-review-machines-chatgpt-browser.service
+sudo install -m 644 ops/systemd/personal-review-machines-webhook-sync.service /etc/systemd/system/personal-review-machines-webhook-sync.service
+sudo install -m 644 ops/systemd/personal-review-machines-webhook-sync.timer /etc/systemd/system/personal-review-machines-webhook-sync.timer
 sudo systemctl daemon-reload
 sudo systemctl enable --now personal-review-machines-chatgpt-browser.service
 sudo systemctl enable --now personal-review-machines.service
+sudo systemctl enable --now personal-review-machines-webhook-sync.timer
+```
+
+Webhook sync timer는 30분마다 `config.json`의 `webhook_url`, `webhook_secret`,
+`allowed_repositories`를 기준으로 GitHub `issue_comment` webhook drift를 수정하고
+ping 응답을 확인합니다. 수동 점검/수정은 아래처럼 실행합니다.
+
+```bash
+scripts/sync-webhooks.py --config /etc/personal-review-machines/config.json --fix --ping
 ```
 
 nginx나 터널은 `/github-webhook` 요청을 `http://127.0.0.1:18080/github-webhook`

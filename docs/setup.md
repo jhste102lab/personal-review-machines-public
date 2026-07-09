@@ -48,7 +48,21 @@ scripts/install-webhook.py YOUR_GITHUB_ID/YOUR_REPO --write-config
 sudo systemctl restart personal-review-machines.service
 ```
 
-수동 설치 값은 `docs/webhook-setup.md`를 따릅니다.
+수동 설치 값은 `docs/webhook-setup.md`를 따릅니다. 운영 서버에서는 webhook URL/secret
+drift를 막기 위해 30분 주기의 sync timer도 같이 켭니다.
+
+```bash
+sudo install -m 644 ops/systemd/personal-review-machines-webhook-sync.service /etc/systemd/system/personal-review-machines-webhook-sync.service
+sudo install -m 644 ops/systemd/personal-review-machines-webhook-sync.timer /etc/systemd/system/personal-review-machines-webhook-sync.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now personal-review-machines-webhook-sync.timer
+```
+
+수동으로 즉시 맞추려면 아래 명령을 실행합니다. secret 값은 출력하지 않습니다.
+
+```bash
+scripts/sync-webhooks.py --config /etc/personal-review-machines/config.json --fix --ping
+```
 
 4. 운영 서버의 로컬 인증과 reviewer CLI를 확인합니다.
 
