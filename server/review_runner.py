@@ -80,6 +80,7 @@ CHATGPT_CDP_POOLS = {
 }
 CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 CHATGPT_SLOT_WAIT_SECONDS = 2.0
+CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS = 360
 
 CLAUDE_REVIEW_EFFORT = "high"
 
@@ -212,8 +213,6 @@ def run_review(
             )
             if _marker_exists(repo, pr_number, marker):
                 return True
-            if engine in CHATGPT_ENGINES and exit_code == 0:
-                return True
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
                 log.write(f"\nAgent exited with code {exit_code}, but the required marker was not posted.\n")
             if post_failure and _post_failure(repo, pr_number, engine, marker, review_dir, log_path, failure_path):
@@ -297,6 +296,9 @@ def _build_unified_review_prompt(
             f"Git repo: {repo}",
             "",
             "GitHub에 게시하는 모든 PR review body, 일반 PR comment, inline review comment body의 첫 줄은 반드시 `ChatGPT`만 쓴다.",
+            f"완료 marker는 GitHub에 실제 게시하는 마지막 리뷰/댓글에만 넣는다: {marker}",
+            "GitHub inline review 또는 PR review body 제출이 막히면 일반 PR comment에 `ChatGPT`, 리뷰 내용, 완료 marker를 남긴다.",
+            "GitHub 게시가 모두 실패하면 marker 없이 이 채팅창에만 코드 리뷰 결과를 남긴다.",
             "",
             template,
             "",
@@ -420,9 +422,10 @@ def _run_agent_with_watchdog(
                 return 124
 
             exit_code = proc.wait()
-            if engine in CHATGPT_ENGINES:
-                return exit_code
-    settle_deadline = time.monotonic() + config.marker_settle_seconds
+    settle_seconds = config.marker_settle_seconds
+    if engine in CHATGPT_ENGINES:
+        settle_seconds = max(settle_seconds, CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS)
+    settle_deadline = time.monotonic() + settle_seconds
     while time.monotonic() < settle_deadline:
         if _marker_exists(repo, pr_number, marker):
             return 0

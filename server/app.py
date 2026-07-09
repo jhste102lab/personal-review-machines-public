@@ -8,7 +8,6 @@ import logging
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config, load_config
@@ -17,8 +16,6 @@ from .store import ReviewJob, ReviewStore
 
 
 LOG = logging.getLogger("personal-review-machines")
-FOLLOWUP_REVIEW_INSTRUCTIONS = frozenset({"코드리뷰", "코드 리뷰"})
-FOLLOWUP_INHERIT_SECONDS = 300
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
@@ -78,7 +75,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 "allowed_author_associations": sorted(allowed_associations),
             }
 
-        parsed = parse_request(comment.get("body") or "") or _parse_followup_request(repo, event)
+        parsed = parse_request(comment.get("body") or "")
         if not parsed:
             return {"ignored": "no_supported_mention"}
         engine, instruction = parsed
@@ -165,101 +162,6 @@ def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
         )
     except Exception:
         LOG.exception("failed to add reaction repo=%s comment_id=%s", repo, comment_id)
-
-
-def _parse_followup_request(repo: str, event: dict) -> tuple[str, str] | None:
-    """Let a bare "코드리뷰" comment inherit the author's recent reviewer mention.
-
-    This keeps the normal mention-only trigger posture, but supports a practical
-    repeated-request flow where an allowed author posts one reviewer mention and
-    then several separate "코드리뷰" comments expecting multiple runs.
-    """
-    comment = event.get("comment", {})
-    body = str(comment.get("body") or "").strip()
-    if body not in FOLLOWUP_REVIEW_INSTRUCTIONS:
-        return None
-
-    current_comment_id = int(comment.get("id") or 0)
-    pr_number = int(event.get("issue", {}).get("number") or 0)
-    author = str(comment.get("user", {}).get("login") or "")
-    current_created_at = _parse_github_datetime(str(comment.get("created_at") or ""))
-    if not current_comment_id or not pr_number or not author or current_created_at is None:
-        return None
-
-    try:
-        comments = _issue_comments(repo, pr_number)
-    except Exception:
-        LOG.exception("failed to load issue comments for follow-up trigger repo=%s pr=%s", repo, pr_number)
-        return None
-
-    for previous in reversed(comments):
-        previous_id = int(previous.get("id") or 0)
-        if previous_id >= current_comment_id:
-            continue
-        if str(previous.get("user", {}).get("login") or "") != author:
-            continue
-        previous_created_at = _parse_github_datetime(str(previous.get("created_at") or ""))
-        if previous_created_at is None:
-            continue
-        elapsed_seconds = (current_created_at - previous_created_at).total_seconds()
-        if elapsed_seconds < 0:
-            continue
-        if elapsed_seconds > FOLLOWUP_INHERIT_SECONDS:
-            return None
-        parsed = parse_request(str(previous.get("body") or ""))
-        if parsed:
-            engine, _previous_instruction = parsed
-            LOG.info(
-                "inherited follow-up review trigger repo=%s pr=%s comment_id=%s engine=%s previous_comment_id=%s",
-                repo,
-                pr_number,
-                current_comment_id,
-                engine,
-                previous_id,
-            )
-            return engine, body
-    return None
-
-
-def _issue_comments(repo: str, pr_number: int) -> list[dict]:
-    result = subprocess.run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    comments = _decode_json_arrays(result.stdout)
-    return comments
-
-
-def _decode_json_arrays(raw: str) -> list[dict]:
-    decoder = json.JSONDecoder()
-    comments: list[dict] = []
-    position = 0
-    while position < len(raw):
-        while position < len(raw) and raw[position].isspace():
-            position += 1
-        if position >= len(raw):
-            break
-        value, position = decoder.raw_decode(raw, position)
-        if not isinstance(value, list):
-            raise ValueError("GitHub issue comments page was not a list")
-        comments.extend(item for item in value if isinstance(item, dict))
-    return comments
-
-
-def _parse_github_datetime(value: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
-        return None
 
 
 def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
