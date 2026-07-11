@@ -74,13 +74,14 @@ CHATGPT_REASONING_LEVELS = {
     "chatgpt_extended": "Pro 확장",
 }
 CHATGPT_CDP_POOLS = {
-    "chatgpt_high": ("http://127.0.0.1:9222", "http://127.0.0.1:9224"),
-    "chatgpt_xhigh": ("http://127.0.0.1:9222", "http://127.0.0.1:9224"),
-    "chatgpt_extended": ("http://127.0.0.1:9223", "http://127.0.0.1:9225"),
+    "chatgpt_high": ("http://127.0.0.1:9222",),
+    "chatgpt_xhigh": ("http://127.0.0.1:9222",),
+    "chatgpt_extended": ("http://127.0.0.1:9222",),
 }
 CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 CHATGPT_SLOT_WAIT_SECONDS = 2.0
-CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS = 360
+CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS = 90
+MARKER_API_TIMEOUT_SECONDS = 20
 
 CLAUDE_REVIEW_EFFORT = "high"
 
@@ -682,19 +683,23 @@ def _marker_exists(repo: str, pr_number: int, marker: str) -> bool:
         f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
     ]
     for path in paths:
-        result = subprocess.run(
-            [
-                "gh",
-                "api",
-                "--paginate",
-                path,
-                "--jq",
-                '.[] | select((.body // "") | contains(env.REVIEW_MARKER)) | (.html_url // .url // (.id | tostring))',
-            ],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    "--paginate",
+                    path,
+                    "--jq",
+                    '.[] | select((.body // "") | contains(env.REVIEW_MARKER)) | (.html_url // .url // (.id | tostring))',
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=MARKER_API_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if result.returncode == 0 and result.stdout.strip():
             return True
     return False

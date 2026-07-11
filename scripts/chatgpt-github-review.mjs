@@ -99,10 +99,23 @@ async function openChatPage(context, url) {
   const existing = context.pages().find((candidate) => candidate.url().includes("chatgpt.com"));
   const page = existing || await context.newPage();
   await page.bringToFront();
-  await page.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
+  await startNewChat(page, url);
   await page.waitForTimeout(2500);
   await page.keyboard.press("Escape").catch(() => {});
   return page;
+}
+
+async function startNewChat(page, url) {
+  const newChatUrl = new URL(url);
+  newChatUrl.pathname = "/";
+  newChatUrl.search = "";
+  newChatUrl.hash = "";
+  await page.goto(newChatUrl.toString(), { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.locator("#prompt-textarea").first().waitFor({ timeout: 20_000 });
+  const assistantMessages = await page.locator('[data-message-author-role="assistant"]').count();
+  if (assistantMessages > 0) {
+    throw new Error("ChatGPT did not open a fresh conversation");
+  }
 }
 
 async function sendPromptWithGithub(page, message, level) {

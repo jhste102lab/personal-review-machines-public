@@ -3,24 +3,24 @@ set -euo pipefail
 
 INTERVAL_SECONDS="${PRM_BROWSER_SUPERVISE_INTERVAL_SECONDS:-30}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
-EXTRA_CDP_PORTS="${PRM_EXTRA_CDP_PORTS:-9223 9224 9225}"
+EXTRA_CDP_PORTS=""
 LOG_PREFIX="chatgpt-browser-supervise"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+browser_healthy() {
+  curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1 || return 1
+  PRM_CDP_PORT="${CDP_PORT}" node "${SCRIPT_DIR}/chatgpt-browser-probe.mjs" >/dev/null 2>&1
+}
 
 while true; do
   needs_start=0
-  if ! curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; then
+  if ! browser_healthy; then
     needs_start=1
   fi
-  for EXTRA_CDP_PORT in $EXTRA_CDP_PORTS; do
-    if [ -n "$EXTRA_CDP_PORT" ] && [ "$EXTRA_CDP_PORT" != "$CDP_PORT" ]; then
-      if ! curl -fsS "http://127.0.0.1:${EXTRA_CDP_PORT}/json/version" >/dev/null 2>&1; then
-        needs_start=1
-      fi
-    fi
-  done
   if [ "$needs_start" -eq 1 ]; then
-    echo "${LOG_PREFIX}: CDP is down; starting browser helpers"
-    if ! chatgpt-browser-start; then
+    echo "${LOG_PREFIX}: CDP is unhealthy; restarting browser helpers"
+    "${SCRIPT_DIR}/chatgpt-browser-stop" || true
+    if ! "${SCRIPT_DIR}/chatgpt-browser-start"; then
       echo "${LOG_PREFIX}: chatgpt-browser-start failed" >&2
     fi
   fi
