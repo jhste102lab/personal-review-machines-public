@@ -91,10 +91,10 @@ cp config.example.json config.json
   "db_path": "/var/lib/personal-review-machines/reviews.sqlite3",
   "bind_host": "127.0.0.1",
   "bind_port": 18080,
-  "job_max_attempts": 1,
-  "job_retry_delay_seconds": 0,
+  "job_max_attempts": 4,
+  "job_retry_delay_seconds": 60,
   "job_poll_seconds": 5,
-  "job_worker_count": 3
+  "job_worker_count": 1
 }
 ```
 

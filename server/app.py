@@ -159,7 +159,10 @@ def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=20,
         )
+    except subprocess.TimeoutExpired:
+        LOG.warning("timed out adding reaction repo=%s comment_id=%s", repo, comment_id)
     except Exception:
         LOG.exception("failed to add reaction repo=%s comment_id=%s", repo, comment_id)
 
@@ -191,6 +194,19 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
         return
 
     message = "review marker was not posted"
+    if job.attempts < config.job_max_attempts:
+        delay_seconds = max(0, config.job_retry_delay_seconds) * (2 ** max(0, job.attempts - 1))
+        store.retry_job(job.repository, job.comment_id, delay_seconds, message)
+        LOG.warning(
+            "retrying review job repo=%s comment_id=%s attempt=%s next_attempt=%s delay_seconds=%s",
+            job.repository,
+            job.comment_id,
+            job.attempts,
+            job.attempts + 1,
+            delay_seconds,
+        )
+        return
+
     store.fail_job(job.repository, job.comment_id, message)
     LOG.error(
         "failed review job repo=%s comment_id=%s attempts=%s automatic_retry=%s",

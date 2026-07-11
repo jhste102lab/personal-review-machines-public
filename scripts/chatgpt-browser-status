@@ -4,17 +4,20 @@ set -euo pipefail
 VNC_PORT="${PRM_VNC_PORT:-5901}"
 NOVNC_PORT="${PRM_NOVNC_PORT:-6080}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
-EXTRA_CDP_PORTS="${PRM_EXTRA_CDP_PORTS:-9223 9224 9225}"
+EXTRA_CDP_PORTS=""
 DISPLAY_NUM="${PRM_DISPLAY:-:99}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 printf 'CDP: '
-curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1 && echo up || echo down
-for EXTRA_CDP_PORT in $EXTRA_CDP_PORTS; do
-  if [ -n "$EXTRA_CDP_PORT" ] && [ "$EXTRA_CDP_PORT" != "$CDP_PORT" ]; then
-    printf 'CDP %s: ' "${EXTRA_CDP_PORT}"
-    curl -fsS "http://127.0.0.1:${EXTRA_CDP_PORT}/json/version" >/dev/null 2>&1 && echo up || echo down
+if curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; then
+  if PRM_CDP_PORT="${CDP_PORT}" node "${SCRIPT_DIR}/chatgpt-browser-probe.mjs" >/dev/null 2>&1; then
+    echo healthy
+  else
+    echo unhealthy
   fi
-done
+else
+  echo down
+fi
 printf 'VNC %s: ' "${VNC_PORT}"
 ss -ltn "( sport = :${VNC_PORT} )" | tail -n +2 | grep -q . && echo up || echo down
 printf 'noVNC %s: ' "${NOVNC_PORT}"
