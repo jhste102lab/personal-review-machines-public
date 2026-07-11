@@ -93,14 +93,15 @@ cp config.example.json config.json
   "bind_port": 18080,
   "job_max_attempts": 4,
   "job_retry_delay_seconds": 60,
-  "job_poll_seconds": 5,
-  "job_worker_count": 1
+  "job_start_interval_seconds": 20
 }
 ```
 
-ChatGPT 작업은 한 번에 하나만 처리합니다. 브라우저 프로세스가 시작된 뒤 marker 확인이
-실패한 작업은 전송 여부가 불명확할 수 있으므로 자동 재시도하지 않아 중복 채팅을 막습니다.
-prompt 전송 전 CDP 연결 실패만 안전한 재시도 대상으로 취급합니다.
+요청은 이전 리뷰 완료를 기다리지 않고 각각 독립적으로 실행합니다. 단, 외부 모델에
+프로세스를 시작하는 순간만 기본 20초 간격으로 분산합니다. ChatGPT 작업은 같은 CDP
+브라우저 안에서도 작업별 독립 페이지/새 채팅을 사용합니다. 브라우저 프로세스가 시작된
+뒤 marker 확인이 실패한 작업은 전송 여부가 불명확할 수 있으므로 자동 재시도하지 않아
+중복 채팅을 막습니다. prompt 전송 전 CDP 연결 실패만 안전한 재시도 대상으로 취급합니다.
 
 3. 대상 repo의 webhook을 추가합니다.
 
