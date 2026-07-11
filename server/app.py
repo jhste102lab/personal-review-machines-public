@@ -11,7 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config, load_config
-from .review_runner import parse_request, run_review
+from .review_runner import CHATGPT_ENGINES, ReviewOutcome, parse_request, run_review
 from .store import ReviewJob, ReviewStore
 
 
@@ -110,9 +110,14 @@ def serve(config_path: str) -> None:
     config = load_config(config_path)
     config.work_dir.mkdir(parents=True, exist_ok=True)
     store = ReviewStore(config.db_path)
-    interrupted = store.requeue_interrupted_jobs()
-    if interrupted:
-        LOG.warning("requeued %s interrupted review job(s)", interrupted)
+    requeued, failed = store.recover_interrupted_jobs(CHATGPT_ENGINES)
+    if requeued:
+        LOG.warning("requeued %s interrupted review job(s)", requeued)
+    if failed:
+        LOG.error(
+            "marked %s interrupted ChatGPT job(s) failed; delivery was uncertain and they were not retried",
+            failed,
+        )
 
     for worker_number in range(1, config.job_worker_count + 1):
         worker = threading.Thread(
@@ -177,7 +182,7 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
         job.attempts,
     )
     try:
-        ok = run_review(
+        outcome = run_review(
             config,
             job.event,
             job.engine,
@@ -186,15 +191,21 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
         )
     except Exception:
         LOG.exception("review job crashed repo=%s comment_id=%s", job.repository, job.comment_id)
-        ok = False
+        # A crash can happen after a browser process submitted the prompt but
+        # before the marker was observed. Never retry ChatGPT in that state.
+        outcome = ReviewOutcome(
+            False,
+            retryable=job.engine not in CHATGPT_ENGINES,
+            reason="worker_exception_delivery_uncertain" if job.engine in CHATGPT_ENGINES else "worker_exception",
+        )
 
-    if ok:
+    if outcome.success:
         store.finish_job(job.repository, job.comment_id)
         LOG.info("finished review job repo=%s comment_id=%s", job.repository, job.comment_id)
         return
 
-    message = "review marker was not posted"
-    if job.attempts < config.job_max_attempts:
+    message = outcome.reason or "review marker was not posted"
+    if outcome.retryable and job.attempts < config.job_max_attempts:
         delay_seconds = max(0, config.job_retry_delay_seconds) * (2 ** max(0, job.attempts - 1))
         store.retry_job(job.repository, job.comment_id, delay_seconds, message)
         LOG.warning(
@@ -208,6 +219,13 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
         return
 
     store.fail_job(job.repository, job.comment_id, message)
+    if not outcome.retryable:
+        LOG.error(
+            "not retrying review job repo=%s comment_id=%s reason=%s; delivery may already have occurred",
+            job.repository,
+            job.comment_id,
+            message,
+        )
     LOG.error(
         "failed review job repo=%s comment_id=%s attempts=%s automatic_retry=%s",
         job.repository,

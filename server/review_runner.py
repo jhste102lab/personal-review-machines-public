@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import fcntl
 import json
 import os
@@ -79,6 +80,9 @@ CHATGPT_CDP_POOLS = {
     "chatgpt_extended": ("http://127.0.0.1:9222",),
 }
 CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+# This is emitted only when Playwright could not connect to CDP, before a
+# page/conversation exists and before the prompt can be submitted.
+CHATGPT_CONNECT_FAILURE_EXIT_CODE = 75
 CHATGPT_SLOT_WAIT_SECONDS = 2.0
 CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS = 90
 MARKER_API_TIMEOUT_SECONDS = 20
@@ -143,6 +147,16 @@ CLAUDE_ALLOWED_TOOLS = [
 ]
 
 
+@dataclass(frozen=True)
+class ReviewOutcome:
+    success: bool
+    retryable: bool = False
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.success
+
+
 def parse_request(body: str) -> tuple[str, str] | None:
     match = re.match(r"^\s*@(?P<engine>glm|미니맥스|딥시크|지피티매우높음|지피티높음|지피티확장|클로드-p|클로드|코덱스|최종리뷰)\b(?P<instruction>.*)", body, re.I | re.S)
     if not match:
@@ -161,7 +175,7 @@ def run_review(
     instruction: str,
     *,
     post_failure: bool = False,
-) -> bool:
+) -> ReviewOutcome:
     repo = event["repository"]["full_name"]
     pr_number = int(event["issue"]["number"])
     comment_id = int(event["comment"]["id"])
@@ -172,7 +186,7 @@ def run_review(
     session_title = _opencode_session_title(repo, pr_number, comment_id, engine) if engine in OPENCODE_ENGINES else None
 
     if _marker_exists(repo, pr_number, marker):
-        return True
+        return ReviewOutcome(True, reason="marker_already_posted")
 
     with _review_workspace(review_root, pr_number, comment_id, engine) as review_dir:
         checkout_dir = review_dir / "checkout"
@@ -180,6 +194,7 @@ def run_review(
         prompt_path = review_dir / "review_prompt.md"
         failure_path = review_dir / "failure_comment.md"
 
+        agent_started = False
         try:
             _checkout_pr(repo, pr_number, checkout_dir, reuse_existing=engine in OPENCODE_ENGINES)
             head_sha = _run_text(["git", "rev-parse", "HEAD"], cwd=checkout_dir).strip()
@@ -199,6 +214,10 @@ def run_review(
                 ),
                 encoding="utf-8",
             )
+            # From this point on a ChatGPT process may submit the prompt. If
+            # delivery cannot be verified afterwards, retrying would create a
+            # second conversation and can duplicate a successful review.
+            agent_started = True
             exit_code = _run_agent_with_watchdog(
                 config=config,
                 engine=engine,
@@ -213,17 +232,31 @@ def run_review(
                 session_title=session_title,
             )
             if _marker_exists(repo, pr_number, marker):
-                return True
+                return ReviewOutcome(True, reason="marker_posted")
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
                 log.write(f"\nAgent exited with code {exit_code}, but the required marker was not posted.\n")
             if post_failure and _post_failure(repo, pr_number, engine, marker, review_dir, log_path, failure_path):
-                return True
-            return False
+                return ReviewOutcome(True, reason="fallback_marker_posted")
+            if engine in CHATGPT_ENGINES:
+                if exit_code == CHATGPT_CONNECT_FAILURE_EXIT_CODE:
+                    return ReviewOutcome(
+                        False,
+                        retryable=True,
+                        reason="chatgpt_connection_failed_before_prompt",
+                    )
+                return ReviewOutcome(
+                    False,
+                    retryable=False,
+                    reason="chatgpt_delivery_uncertain",
+                )
+            return ReviewOutcome(False, retryable=True, reason="marker_not_posted")
         except Exception as exc:
             log_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
             if post_failure and _post_failure(repo, pr_number, engine, marker, review_dir, log_path, failure_path):
-                return True
-            return False
+                return ReviewOutcome(True, reason="fallback_marker_posted")
+            if engine in CHATGPT_ENGINES and agent_started:
+                return ReviewOutcome(False, reason="chatgpt_delivery_uncertain")
+            return ReviewOutcome(False, retryable=True, reason="pre_send_failure")
 
 
 @contextmanager

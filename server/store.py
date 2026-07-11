@@ -98,20 +98,41 @@ class ReviewStore:
         except sqlite3.IntegrityError:
             return False
 
-    def requeue_interrupted_jobs(self) -> int:
+    def recover_interrupted_jobs(self, non_retryable_engines: set[str] | frozenset[str]) -> tuple[int, int]:
+        requeued = 0
+        failed = 0
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                UPDATE review_jobs
-                SET status = 'queued',
-                    next_run_at = ?,
-                    updated_at = CURRENT_TIMESTAMP,
-                    last_error = 'service restarted while job was running'
-                WHERE status = 'running'
-                """,
-                (time.time(),),
-            )
-            return cursor.rowcount
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT repository, comment_id, engine FROM review_jobs WHERE status = 'running'"
+            ).fetchall()
+            for repository, comment_id, engine in rows:
+                if str(engine) in non_retryable_engines:
+                    db.execute(
+                        """
+                        UPDATE review_jobs
+                        SET status = 'failed',
+                            updated_at = CURRENT_TIMESTAMP,
+                            last_error = 'service restarted after ChatGPT dispatch may have occurred; not retried'
+                        WHERE repository = ? AND comment_id = ?
+                        """,
+                        (repository, int(comment_id)),
+                    )
+                    failed += 1
+                else:
+                    db.execute(
+                        """
+                        UPDATE review_jobs
+                        SET status = 'queued',
+                            next_run_at = ?,
+                            updated_at = CURRENT_TIMESTAMP,
+                            last_error = 'service restarted while job was running'
+                        WHERE repository = ? AND comment_id = ?
+                        """,
+                        (time.time(), repository, int(comment_id)),
+                    )
+                    requeued += 1
+        return requeued, failed
 
     def claim_next_job(self) -> ReviewJob | None:
         now = time.time()

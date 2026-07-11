@@ -22,51 +22,62 @@ const playwright = await import(
 );
 const { chromium } = playwright.default || playwright;
 
-const browser = await chromium.connectOverCDP(cdpUrl);
+let browser;
 try {
-  const context = browser.contexts()[0] || await browser.newContext();
-  const page = await openChatPage(context, chatgptUrl);
-  await sendPromptWithGithub(page, prompt, reasoningLevel);
-  const first = await waitForReviewState(page, fallbackDelayMs);
-  console.log(JSON.stringify({ phase: "first-check", ...first }));
+  browser = await chromium.connectOverCDP(cdpUrl);
+} catch (error) {
+  // Exit 75 is reserved for a pre-send CDP connection failure. The worker
+  // may retry this safely because no conversation or prompt exists yet.
+  console.error(error);
+  process.exitCode = 75;
+}
 
-  if (forceFallbackAfterDelay || first.needsFallback) {
-    if (forceFallbackAfterDelay && first.running) {
-      await stopRunningResponse(page);
-    }
-    await sendPromptWithGithub(page, buildFallbackPrompt(prompt), reasoningLevel);
-    const second = await waitForReviewState(page, Math.max(10_000, timeoutMs - fallbackDelayMs));
-    console.log(JSON.stringify({ phase: "fallback-check", ...second }));
-    if (second.running) {
-      console.error("ChatGPT was still running after the fallback timeout.");
-      process.exitCode = 124;
-    } else if (second.needsFallback) {
-      console.error("ChatGPT stopped without a usable review after GitHub fallback.");
-      process.exitCode = 2;
-    }
-  } else if (first.running) {
-    const remaining = Math.max(10_000, timeoutMs - fallbackDelayMs);
-    const final = await waitForReviewState(page, remaining);
-    console.log(JSON.stringify({ phase: "final-check", ...final }));
-    if (final.running) {
-      console.error("ChatGPT was still running after the review timeout.");
-      process.exitCode = 124;
-    } else if (final.needsFallback) {
+if (browser) {
+  try {
+    const context = browser.contexts()[0] || await browser.newContext();
+    const page = await openChatPage(context, chatgptUrl);
+    await sendPromptWithGithub(page, prompt, reasoningLevel);
+    const first = await waitForReviewState(page, fallbackDelayMs);
+    console.log(JSON.stringify({ phase: "first-check", ...first }));
+
+    if (forceFallbackAfterDelay || first.needsFallback) {
+      if (forceFallbackAfterDelay && first.running) {
+        await stopRunningResponse(page);
+      }
       await sendPromptWithGithub(page, buildFallbackPrompt(prompt), reasoningLevel);
-      const fallback = await waitForReviewState(page, Math.max(10_000, timeoutMs / 2));
-      console.log(JSON.stringify({ phase: "late-fallback-check", ...fallback }));
-      if (fallback.running) {
-        console.error("ChatGPT was still running after the late fallback timeout.");
+      const second = await waitForReviewState(page, Math.max(10_000, timeoutMs - fallbackDelayMs));
+      console.log(JSON.stringify({ phase: "fallback-check", ...second }));
+      if (second.running) {
+        console.error("ChatGPT was still running after the fallback timeout.");
         process.exitCode = 124;
-      } else if (fallback.needsFallback) {
+      } else if (second.needsFallback) {
+        console.error("ChatGPT stopped without a usable review after GitHub fallback.");
         process.exitCode = 2;
       }
+    } else if (first.running) {
+      const remaining = Math.max(10_000, timeoutMs - fallbackDelayMs);
+      const final = await waitForReviewState(page, remaining);
+      console.log(JSON.stringify({ phase: "final-check", ...final }));
+      if (final.running) {
+        console.error("ChatGPT was still running after the review timeout.");
+        process.exitCode = 124;
+      } else if (final.needsFallback) {
+        await sendPromptWithGithub(page, buildFallbackPrompt(prompt), reasoningLevel);
+        const fallback = await waitForReviewState(page, Math.max(10_000, timeoutMs / 2));
+        console.log(JSON.stringify({ phase: "late-fallback-check", ...fallback }));
+        if (fallback.running) {
+          console.error("ChatGPT was still running after the late fallback timeout.");
+          process.exitCode = 124;
+        } else if (fallback.needsFallback) {
+          process.exitCode = 2;
+        }
+      }
     }
-  }
 
-  console.log(JSON.stringify({ ok: true, model: modelName, reasoningLevel, url: page.url() }));
-} finally {
-  await browser.close().catch(() => {});
+    console.log(JSON.stringify({ ok: true, model: modelName, reasoningLevel, url: page.url() }));
+  } finally {
+    await browser.close().catch(() => {});
+  }
 }
 
 function parseArgs(argv) {

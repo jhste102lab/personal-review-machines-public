@@ -98,6 +98,10 @@ cp config.example.json config.json
 }
 ```
 
+ChatGPT 작업은 한 번에 하나만 처리합니다. 브라우저 프로세스가 시작된 뒤 marker 확인이
+실패한 작업은 전송 여부가 불명확할 수 있으므로 자동 재시도하지 않아 중복 채팅을 막습니다.
+prompt 전송 전 CDP 연결 실패만 안전한 재시도 대상으로 취급합니다.
+
 3. 대상 repo의 webhook을 추가합니다.
 
 CLI로 설치:
