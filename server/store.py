@@ -134,7 +134,20 @@ class ReviewStore:
                     requeued += 1
         return requeued, failed
 
-    def claim_next_job(self) -> ReviewJob | None:
+    def list_queued_jobs(self) -> list[tuple[ReviewJob, float]]:
+        now = time.time()
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT repository, comment_id, engine, instruction, event_json, attempts, next_run_at
+                FROM review_jobs
+                WHERE status = 'queued'
+                ORDER BY next_run_at ASC, created_at ASC
+                """,
+            ).fetchall()
+        return [(self._row_to_job(row[:6]), max(0.0, float(row[6]) - now)) for row in rows]
+
+    def start_job(self, repository: str, comment_id: int) -> ReviewJob | None:
         now = time.time()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -142,35 +155,36 @@ class ReviewStore:
                 """
                 SELECT repository, comment_id, engine, instruction, event_json, attempts
                 FROM review_jobs
-                WHERE status = 'queued'
+                WHERE repository = ?
+                  AND comment_id = ?
+                  AND status = 'queued'
                   AND next_run_at <= ?
-                ORDER BY next_run_at ASC, created_at ASC
-                LIMIT 1
                 """,
-                (now,),
+                (repository.lower(), int(comment_id), now),
             ).fetchone()
             if row is None:
                 return None
-            repository, comment_id, engine, instruction, event_json, attempts = row
-            attempts = int(attempts) + 1
+            attempts = int(row[5]) + 1
             db.execute(
                 """
                 UPDATE review_jobs
-                SET status = 'running',
-                    attempts = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE repository = ?
-                  AND comment_id = ?
+                SET status = 'running', attempts = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE repository = ? AND comment_id = ? AND status = 'queued'
                 """,
-                (attempts, repository, int(comment_id)),
+                (attempts, repository.lower(), int(comment_id)),
             )
+        return self._row_to_job((*row[:5], attempts))
+
+    @staticmethod
+    def _row_to_job(row: tuple[object, ...]) -> ReviewJob:
+        repository, comment_id, engine, instruction, event_json, attempts = row
         return ReviewJob(
             repository=str(repository),
             comment_id=int(comment_id),
             engine=str(engine),
             instruction=str(instruction),
             event=json.loads(str(event_json)),
-            attempts=attempts,
+            attempts=int(attempts),
         )
 
     def finish_job(self, repository: str, comment_id: int) -> None:

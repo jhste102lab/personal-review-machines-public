@@ -18,9 +18,29 @@ from .store import ReviewJob, ReviewStore
 LOG = logging.getLogger("personal-review-machines")
 
 
+class LaunchGate:
+    """Keep independent review processes from starting at the same instant."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._next_start_at = 0.0
+
+    def wait_for_turn(self, interval_seconds: int) -> None:
+        interval = max(0, interval_seconds)
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                wait_seconds = max(0.0, self._next_start_at - now)
+                if wait_seconds == 0:
+                    self._next_start_at = now + interval
+                    return
+            time.sleep(wait_seconds)
+
+
 class WebhookHandler(BaseHTTPRequestHandler):
     config: Config
     store: ReviewStore
+    launch_gate: LaunchGate
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -83,8 +103,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
         comment_id = int(comment["id"])
         if not self.store.enqueue_job(repo, comment_id, engine, instruction, event):
             return {"ignored": "already_processed", "comment_id": comment_id}
+        _schedule_job(self.config, self.store, self.launch_gate, repo, comment_id)
         _add_comment_reaction(repo, comment_id, "eyes")
-        return {"queued": True, "repository": repo, "comment_id": comment_id, "engine": engine}
+        return {"accepted": True, "repository": repo, "comment_id": comment_id, "engine": engine}
 
     def _valid_signature(self, raw: bytes) -> bool:
         signature = self.headers.get("X-Hub-Signature-256", "")
@@ -119,32 +140,67 @@ def serve(config_path: str) -> None:
             failed,
         )
 
-    for worker_number in range(1, config.job_worker_count + 1):
-        worker = threading.Thread(
-            target=_worker_loop,
-            args=(config, store),
-            name=f"review-worker-{worker_number}",
-            daemon=True,
-        )
-        worker.start()
-
+    launch_gate = LaunchGate()
     WebhookHandler.config = config
     WebhookHandler.store = store
+    WebhookHandler.launch_gate = launch_gate
     server = ThreadingHTTPServer((config.bind_host, config.bind_port), WebhookHandler)
-    LOG.info("listening on %s:%s", config.bind_host, config.bind_port)
+    pending_jobs = store.list_queued_jobs()
+    for job, delay_seconds in pending_jobs:
+        _schedule_job(config, store, launch_gate, job.repository, job.comment_id, delay_seconds)
+    LOG.info(
+        "listening on %s:%s; parallel dispatch interval=%ss pending_jobs=%s",
+        config.bind_host,
+        config.bind_port,
+        config.job_start_interval_seconds,
+        len(pending_jobs),
+    )
     server.serve_forever()
 
 
-def _worker_loop(config: Config, store: ReviewStore) -> None:
-    while True:
-        try:
-            job = store.claim_next_job()
-            if job is not None:
-                _run_job(config, store, job)
-        except Exception:
-            LOG.exception("review worker loop failed")
-        finally:
-            time.sleep(config.job_poll_seconds)
+def _schedule_job(
+    config: Config,
+    store: ReviewStore,
+    launch_gate: LaunchGate,
+    repository: str,
+    comment_id: int,
+    delay_seconds: float = 0,
+) -> None:
+    if delay_seconds > 0:
+        timer = threading.Timer(
+            delay_seconds,
+            _schedule_job,
+            args=(config, store, launch_gate, repository, comment_id),
+        )
+        timer.daemon = True
+        timer.start()
+        return
+    thread = threading.Thread(
+        target=_dispatch_job,
+        args=(config, store, launch_gate, repository, comment_id),
+        name=f"review-dispatch-{comment_id}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _dispatch_job(
+    config: Config,
+    store: ReviewStore,
+    launch_gate: LaunchGate,
+    repository: str,
+    comment_id: int,
+) -> None:
+    try:
+        job = store.start_job(repository, comment_id)
+        if job is None:
+            LOG.info("skipping job repo=%s comment_id=%s; it is no longer due", repository, comment_id)
+            return
+        launch_gate.wait_for_turn(config.job_start_interval_seconds)
+        _run_job(config, store, launch_gate, job)
+    except Exception:
+        LOG.exception("review dispatch failed repo=%s comment_id=%s", repository, comment_id)
+        store.fail_job(repository, comment_id, "review dispatch failed")
 
 
 def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
@@ -172,9 +228,9 @@ def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
         LOG.exception("failed to add reaction repo=%s comment_id=%s", repo, comment_id)
 
 
-def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
+def _run_job(config: Config, store: ReviewStore, launch_gate: LaunchGate, job: ReviewJob) -> None:
     LOG.info(
-        "starting review job worker=%s repo=%s comment_id=%s engine=%s attempt=%s",
+        "starting review job thread=%s repo=%s comment_id=%s engine=%s attempt=%s",
         threading.current_thread().name,
         job.repository,
         job.comment_id,
@@ -208,6 +264,14 @@ def _run_job(config: Config, store: ReviewStore, job: ReviewJob) -> None:
     if outcome.retryable and job.attempts < config.job_max_attempts:
         delay_seconds = max(0, config.job_retry_delay_seconds) * (2 ** max(0, job.attempts - 1))
         store.retry_job(job.repository, job.comment_id, delay_seconds, message)
+        _schedule_job(
+            config,
+            store,
+            launch_gate,
+            job.repository,
+            job.comment_id,
+            delay_seconds,
+        )
         LOG.warning(
             "retrying review job repo=%s comment_id=%s attempt=%s next_attempt=%s delay_seconds=%s",
             job.repository,

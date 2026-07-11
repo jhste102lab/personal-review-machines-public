@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import json
 import os
 import re
@@ -74,16 +73,10 @@ CHATGPT_REASONING_LEVELS = {
     "chatgpt_xhigh": "매우 높음",
     "chatgpt_extended": "Pro 확장",
 }
-CHATGPT_CDP_POOLS = {
-    "chatgpt_high": ("http://127.0.0.1:9222",),
-    "chatgpt_xhigh": ("http://127.0.0.1:9222",),
-    "chatgpt_extended": ("http://127.0.0.1:9222",),
-}
 CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 # This is emitted only when Playwright could not connect to CDP, before a
 # page/conversation exists and before the prompt can be submitted.
 CHATGPT_CONNECT_FAILURE_EXIT_CODE = 75
-CHATGPT_SLOT_WAIT_SECONDS = 2.0
 CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS = 90
 MARKER_API_TIMEOUT_SECONDS = 20
 
@@ -478,53 +471,18 @@ class _ChatGPTBrowserSlot:
         self.engine = engine
         self.log = log
         self.cdp_url = CHATGPT_DEFAULT_CDP_URL
-        self._lock_file = None
 
     def __enter__(self):
-        self.cdp_url, self._lock_file = _acquire_chatgpt_browser_lock(self.engine, self.log)
+        self.log.write(f"ChatGPT browser session assigned: {self.cdp_url}\n")
+        self.log.flush()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        if self._lock_file is None:
-            return
-        try:
-            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
-        finally:
-            self._lock_file.close()
-            self._lock_file = None
+        return None
 
 
 def _chatgpt_browser_slot(engine: str, log: object) -> _ChatGPTBrowserSlot:
     return _ChatGPTBrowserSlot(engine, log)
-
-
-def _acquire_chatgpt_browser_lock(engine: str, log: object):
-    urls = CHATGPT_CDP_POOLS.get(engine, (CHATGPT_DEFAULT_CDP_URL,))
-    lock_dir = Path(tempfile.gettempdir()) / "personal-review-machines-chatgpt-locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    logged_wait = False
-    while True:
-        for url in urls:
-            lock_path = lock_dir / f"{_chatgpt_cdp_lock_name(url)}.lock"
-            lock_file = lock_path.open("a+")
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                lock_file.close()
-                continue
-            log.write(f"ChatGPT browser slot acquired: {url}\n")
-            log.flush()
-            return url, lock_file
-        if not logged_wait:
-            ports = ", ".join(urls)
-            log.write(f"All ChatGPT browser slots are busy for {engine}; waiting: {ports}\n")
-            log.flush()
-            logged_wait = True
-        time.sleep(CHATGPT_SLOT_WAIT_SECONDS)
-
-
-def _chatgpt_cdp_lock_name(url: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", url).strip("_") or "default"
 
 def _agent_command(
     config: Config,

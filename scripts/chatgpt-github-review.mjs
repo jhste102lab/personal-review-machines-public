@@ -33,9 +33,10 @@ try {
 }
 
 if (browser) {
+  let page;
   try {
     const context = browser.contexts()[0] || await browser.newContext();
-    const page = await openChatPage(context, chatgptUrl);
+    page = await openChatPage(context, chatgptUrl);
     await sendPromptWithGithub(page, prompt, reasoningLevel);
     const first = await waitForReviewState(page, fallbackDelayMs);
     console.log(JSON.stringify({ phase: "first-check", ...first }));
@@ -76,6 +77,9 @@ if (browser) {
 
     console.log(JSON.stringify({ ok: true, model: modelName, reasoningLevel, url: page.url() }));
   } finally {
+    if (page) {
+      await page.close().catch(() => {});
+    }
     await browser.close().catch(() => {});
   }
 }
@@ -107,8 +111,9 @@ function requiredArg(parsed, name) {
 }
 
 async function openChatPage(context, url) {
-  const existing = context.pages().find((candidate) => candidate.url().includes("chatgpt.com"));
-  const page = existing || await context.newPage();
+  // Every review gets its own page so parallel jobs cannot navigate or type
+  // into one another's conversation.
+  const page = await context.newPage();
   await page.bringToFront();
   await startNewChat(page, url);
   await page.waitForTimeout(2500);
