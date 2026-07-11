@@ -81,7 +81,9 @@ def load_config(path: str | Path) -> Config:
         job_max_attempts=int(raw.get("job_max_attempts", 4)),
         job_retry_delay_seconds=int(raw.get("job_retry_delay_seconds", 60)),
         job_poll_seconds=int(raw.get("job_poll_seconds", 5)),
-        job_worker_count=int(raw.get("job_worker_count", 1)),
+        # Keep the deployed queue single-flight even when an older host config
+        # still contains a larger worker count.
+        job_worker_count=1,
     )
 
 
