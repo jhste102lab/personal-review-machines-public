@@ -77,7 +77,7 @@ CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 # This is emitted only when Playwright could not connect to CDP, before a
 # page/conversation exists and before the prompt can be submitted.
 CHATGPT_CONNECT_FAILURE_EXIT_CODE = 75
-CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS = 90
+CHATGPT_SESSION_CONFIRMATION_TIMEOUT_SECONDS = 60
 MARKER_API_TIMEOUT_SECONDS = 20
 
 CLAUDE_REVIEW_EFFORT = "high"
@@ -207,9 +207,8 @@ def run_review(
                 ),
                 encoding="utf-8",
             )
-            # From this point on a ChatGPT process may submit the prompt. If
-            # delivery cannot be verified afterwards, retrying would create a
-            # second conversation and can duplicate a successful review.
+            # ChatGPT jobs finish when the browser confirms a persisted chat session.
+            # GitHub review publication is intentionally not part of this job.
             agent_started = True
             exit_code = _run_agent_with_watchdog(
                 config=config,
@@ -224,6 +223,8 @@ def run_review(
                 run_id=run_id,
                 session_title=session_title,
             )
+            if engine in CHATGPT_ENGINES and exit_code == 0:
+                return ReviewOutcome(True, reason="chatgpt_session_created")
             if _marker_exists(repo, pr_number, marker):
                 return ReviewOutcome(True, reason="marker_posted")
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
@@ -237,18 +238,14 @@ def run_review(
                         retryable=True,
                         reason="chatgpt_connection_failed_before_prompt",
                     )
-                return ReviewOutcome(
-                    False,
-                    retryable=False,
-                    reason="chatgpt_delivery_uncertain",
-                )
+                return ReviewOutcome(False, retryable=True, reason="chatgpt_prompt_send_failed")
             return ReviewOutcome(False, retryable=True, reason="marker_not_posted")
         except Exception as exc:
             log_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
             if post_failure and _post_failure(repo, pr_number, engine, marker, review_dir, log_path, failure_path):
                 return ReviewOutcome(True, reason="fallback_marker_posted")
             if engine in CHATGPT_ENGINES and agent_started:
-                return ReviewOutcome(False, reason="chatgpt_delivery_uncertain")
+                return ReviewOutcome(False, reason="chatgpt_prompt_send_unknown")
             return ReviewOutcome(False, retryable=True, reason="pre_send_failure")
 
 
@@ -428,6 +425,13 @@ def _run_agent_with_watchdog(
                 preexec_fn=os.setsid,
                 env=env,
             )
+            if engine in CHATGPT_ENGINES:
+                try:
+                    return proc.wait(timeout=CHATGPT_SESSION_CONFIRMATION_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    log.write("\nChatGPT session confirmation timed out.\n")
+                    _terminate_process_group(proc)
+                    return 124
             deadline = time.monotonic() + config.model_timeout_seconds
             while proc.poll() is None and time.monotonic() < deadline:
                 if _marker_exists(repo, pr_number, marker):
@@ -449,9 +453,9 @@ def _run_agent_with_watchdog(
                 return 124
 
             exit_code = proc.wait()
-    settle_seconds = config.marker_settle_seconds
     if engine in CHATGPT_ENGINES:
-        settle_seconds = max(settle_seconds, CHATGPT_POST_EXIT_MARKER_SETTLE_SECONDS)
+        return exit_code
+    settle_seconds = config.marker_settle_seconds
     settle_deadline = time.monotonic() + settle_seconds
     while time.monotonic() < settle_deadline:
         if _marker_exists(repo, pr_number, marker):
@@ -616,17 +620,13 @@ def _agent_command(
             config.chatgpt_url,
             "--model",
             ENGINE_MODEL_NAMES.get(engine, engine),
-            "--timeout",
-            str(timeout_seconds),
             "--prompt-file",
             str(prompt_path),
             "--cdp",
             chatgpt_cdp_url or CHATGPT_DEFAULT_CDP_URL,
             "--reasoning-level",
-            CHATGPT_REASONING_LEVELS.get(engine, "Pro 확장"),
-            "--fallback-delay",
-            "30",
-        ] + (["--force-fallback-after-delay", "1"] if engine == "chatgpt_extended" else [])
+            CHATGPT_REASONING_LEVELS.get(engine, "Pro"),
+        ]
     raise RuntimeError(f"Unknown review engine: {engine}")
 
 

@@ -28,5 +28,5 @@
   "poll_seconds": 10,
   "job_max_attempts": 4,
   "job_retry_delay_seconds": 60,
-  "job_start_interval_seconds": 20
+  "job_start_interval_seconds": 15
 }

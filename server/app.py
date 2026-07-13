@@ -265,7 +265,8 @@ def _run_job(config: Config, store: ReviewStore, launch_gate: LaunchGate, job: R
 
     if outcome.success:
         store.finish_job(job.repository, job.comment_id)
-        _add_comment_reaction(job.repository, job.comment_id, "rocket")
+        if outcome.reason == "chatgpt_session_created":
+            _add_comment_reaction(job.repository, job.comment_id, "rocket")
         LOG.info("finished review job repo=%s comment_id=%s", job.repository, job.comment_id)
         return
 

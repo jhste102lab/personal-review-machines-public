@@ -18,8 +18,8 @@ PR 댓글 생성
 -> @glm / @미니맥스 / @딥시크 / @지피티높음 / @지피티매우높음 / @지피티확장 / @클로드 / @클로드-p / @코덱스 멘션 파싱
 -> gh로 PR context/diff/최근 댓글/리뷰 수집
 -> 로컬 opencode/ChatGPT 웹 UI(CloakBrowser)/claude/claude-p/codex 실행
--> marker 포함 inline review comment, PR review body, 또는 일반 PR comment가 실제 게시됐는지 확인
--> 게시 확인 실패 시 자동 PR comment 없이 DB/log에 실패 기록
+-> ChatGPT는 PR 프롬프트가 새 채팅 세션에 저장된 것을 확인한 뒤 완료 처리
+-> 다른 리뷰어는 marker 포함 inline review comment, PR review body, 또는 일반 PR comment의 실제 게시를 확인
 ```
 
 리뷰는 자동 실행되지 않습니다. PR을 열거나 push해도 아무 일도 하지 않고, repo
@@ -93,15 +93,15 @@ cp config.example.json config.json
   "bind_port": 18080,
   "job_max_attempts": 4,
   "job_retry_delay_seconds": 60,
-  "job_start_interval_seconds": 20
+  "job_start_interval_seconds": 15
 }
 ```
 
 요청은 이전 리뷰 완료를 기다리지 않고 각각 독립적으로 실행합니다. 단, 외부 모델에
-프로세스를 시작하는 순간만 기본 20초 간격으로 분산합니다. ChatGPT 작업은 같은 CDP
-브라우저 안에서도 작업별 독립 페이지/새 채팅을 사용합니다. 브라우저 프로세스가 시작된
-뒤 marker 확인이 실패한 작업은 전송 여부가 불명확할 수 있으므로 자동 재시도하지 않아
-중복 채팅을 막습니다. prompt 전송 전 CDP 연결 실패만 안전한 재시도 대상으로 취급합니다.
+프로세스를 시작하는 순간만 기본 15초 간격으로 분산합니다. ChatGPT 작업은 같은 CDP
+브라우저 안에서 작업별 독립 페이지/새 채팅을 열고, GitHub 앱 연결과 사고 레벨 선택 뒤
+PR 프롬프트가 새 ChatGPT 세션에 저장된 것을 확인하면 작업을 끝냅니다. ChatGPT의
+GitHub 댓글·리뷰 게시 여부는 이 서비스가 확인하지 않습니다.
 
 3. 대상 repo의 webhook을 추가합니다.
 
@@ -174,9 +174,9 @@ nginx나 터널은 `/github-webhook` 요청을 `http://127.0.0.1:18080/github-we
 - PR head는 GitHub의 `refs/pull/<number>/head`로 checkout합니다. fork repo의
   secret이나 Actions 권한은 사용하지 않습니다.
 - 처리한 comment id는 SQLite에 저장해 중복 실행을 막습니다.
-- 모델이 GitHub 게시 없이 채팅 응답에만 리뷰를 남기면 실패입니다. marker 포함
-  inline review comment, PR review body, 또는 일반 PR comment가 실제 PR에 게시되면
-  성공으로 봅니다.
+- ChatGPT는 PR 프롬프트가 새 채팅 세션에 저장된 것을 확인하면 성공으로 봅니다. GitHub 게시 여부는
+  확인하지 않습니다. 다른 리뷰어는 marker 포함 inline review comment, PR review body,
+  또는 일반 PR comment가 실제 PR에 게시되어야 성공입니다.
 - PR code 실행, build, test, install은 리뷰 지시에서 금지합니다.
 - `codex`는 파일 수정 없이 읽기 전용 리뷰로만 사용합니다. sandbox와 host
   integration 설정을 바꿀 때도 PR code 실행/build/test/install 금지와 marker
