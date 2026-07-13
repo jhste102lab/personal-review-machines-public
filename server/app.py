@@ -205,7 +205,7 @@ def _dispatch_job(
 
 def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 "gh",
                 "api",
@@ -222,6 +222,14 @@ def _add_comment_reaction(repo: str, comment_id: int, content: str) -> None:
             stderr=subprocess.DEVNULL,
             timeout=20,
         )
+        if result.returncode != 0:
+            LOG.warning(
+                "failed to add reaction repo=%s comment_id=%s content=%s exit_code=%s",
+                repo,
+                comment_id,
+                content,
+                result.returncode,
+            )
     except subprocess.TimeoutExpired:
         LOG.warning("timed out adding reaction repo=%s comment_id=%s", repo, comment_id)
     except Exception:
@@ -257,6 +265,7 @@ def _run_job(config: Config, store: ReviewStore, launch_gate: LaunchGate, job: R
 
     if outcome.success:
         store.finish_job(job.repository, job.comment_id)
+        _add_comment_reaction(job.repository, job.comment_id, "rocket")
         LOG.info("finished review job repo=%s comment_id=%s", job.repository, job.comment_id)
         return
 

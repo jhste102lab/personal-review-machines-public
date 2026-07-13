@@ -71,7 +71,7 @@ CHATGPT_MODEL_EFFORTS = {
 CHATGPT_REASONING_LEVELS = {
     "chatgpt_high": "높음",
     "chatgpt_xhigh": "매우 높음",
-    "chatgpt_extended": "Pro 확장",
+    "chatgpt_extended": "Pro",
 }
 CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 # This is emitted only when Playwright could not connect to CDP, before a
