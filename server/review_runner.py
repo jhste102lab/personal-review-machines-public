@@ -77,6 +77,9 @@ CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 # This is emitted only when Playwright could not connect to CDP, before a
 # page/conversation exists and before the prompt can be submitted.
 CHATGPT_CONNECT_FAILURE_EXIT_CODE = 75
+CHATGPT_PROMPT_SUBMIT_UNCERTAIN_EXIT_CODE = 76
+CHATGPT_PRE_SEND_FAILURE_EXIT_CODE = 77
+CHATGPT_POST_EXIT_MARKER_GRACE_SECONDS = 180
 CHATGPT_SESSION_CONFIRMATION_TIMEOUT_SECONDS = 60
 MARKER_API_TIMEOUT_SECONDS = 20
 
@@ -238,7 +241,9 @@ def run_review(
                         retryable=True,
                         reason="chatgpt_connection_failed_before_prompt",
                     )
-                return ReviewOutcome(False, retryable=True, reason="chatgpt_prompt_send_failed")
+                if exit_code == CHATGPT_PRE_SEND_FAILURE_EXIT_CODE:
+                    return ReviewOutcome(False, retryable=True, reason="chatgpt_prompt_send_failed")
+                return ReviewOutcome(False, reason="chatgpt_delivery_uncertain")
             return ReviewOutcome(False, retryable=True, reason="marker_not_posted")
         except Exception as exc:
             log_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
@@ -454,6 +459,15 @@ def _run_agent_with_watchdog(
 
             exit_code = proc.wait()
     if engine in CHATGPT_ENGINES:
+        if exit_code == CHATGPT_PROMPT_SUBMIT_UNCERTAIN_EXIT_CODE:
+            deadline = time.monotonic() + max(
+                config.marker_settle_seconds,
+                CHATGPT_POST_EXIT_MARKER_GRACE_SECONDS,
+            )
+            while time.monotonic() < deadline:
+                if _marker_exists(repo, pr_number, marker):
+                    return 0
+                time.sleep(config.poll_seconds)
         return exit_code
     settle_seconds = config.marker_settle_seconds
     settle_deadline = time.monotonic() + settle_seconds

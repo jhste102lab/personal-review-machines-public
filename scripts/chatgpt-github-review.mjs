@@ -21,6 +21,7 @@ const playwright = await import(
 const { chromium } = playwright.default || playwright;
 
 let browser;
+let promptSubmitAttempted = false;
 try {
   browser = await chromium.connectOverCDP(cdpUrl);
 } catch (error) {
@@ -45,6 +46,12 @@ if (browser) {
       reasoningLevel,
       sessionUrl,
     }));
+  } catch (error) {
+    // A failure after clicking Send is delivery-uncertain: ChatGPT may keep
+    // running server-side and publish the GitHub review after this process
+    // exits. The worker uses a distinct exit code to avoid duplicate retries.
+    console.error(error);
+    process.exitCode = promptSubmitAttempted ? 76 : 77;
   } finally {
     // The prompt continues server-side; retaining the dedicated tab only leaks
     // one renderer per review and eventually exhausts host CPU and memory.
@@ -123,6 +130,9 @@ async function sendPromptWithGithub(page, message, level) {
   await page.keyboard.press("End").catch(() => {});
   await page.keyboard.insertText(message);
   await page.waitForTimeout(700);
+  // The click can submit the prompt even if Playwright reports a navigation
+  // or confirmation failure afterwards.
+  promptSubmitAttempted = true;
   await page.locator("#composer-submit-button").click({ timeout: 10_000 });
   return confirmChatSession(page);
 }
