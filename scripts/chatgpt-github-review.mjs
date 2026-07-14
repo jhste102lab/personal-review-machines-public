@@ -32,10 +32,12 @@ try {
 
 if (browser) {
   let page;
+  let sessionCreated = false;
   try {
     const context = browser.contexts()[0] || await browser.newContext();
     page = await openChatPage(context, chatgptUrl);
     const sessionUrl = await sendPromptWithGithub(page, prompt, reasoningLevel);
+    sessionCreated = true;
     console.log(JSON.stringify({
       ok: true,
       phase: "chat-session-created",
@@ -47,6 +49,11 @@ if (browser) {
     // The prompt continues server-side; retaining the dedicated tab only leaks
     // one renderer per review and eventually exhausts host CPU and memory.
     if (page) {
+      if (sessionCreated) {
+        await closeTemporaryChat(page, chatgptUrl).catch((error) => {
+          console.error(`temporary chat cleanup failed: ${error.message}`);
+        });
+      }
       await page.close().catch(() => {});
     }
     await browser.close().catch(() => {});
@@ -107,6 +114,7 @@ async function sendPromptWithGithub(page, message, level) {
   const textbox = page.locator("#prompt-textarea").first();
   await textbox.waitFor({ timeout: 20_000 });
   await clearComposer(page, textbox);
+  await enableTemporaryChat(page);
   await attachGithubPlugin(page);
   await selectReasoningLevel(page, level);
   await page.keyboard.press("Escape").catch(() => {});
@@ -117,6 +125,25 @@ async function sendPromptWithGithub(page, message, level) {
   await page.waitForTimeout(700);
   await page.locator("#composer-submit-button").click({ timeout: 10_000 });
   return confirmChatSession(page);
+}
+
+async function enableTemporaryChat(page) {
+  const enabled = page.getByRole("button", {
+    name: /임시 채팅 끄기|turn off temporary chat/i,
+  }).last();
+  if (await enabled.count()) {
+    return;
+  }
+
+  const disabled = page.getByRole("button", {
+    name: /임시 채팅 켜기|turn on temporary chat|enable temporary chat/i,
+  }).last();
+  await disabled.click({ timeout: 5000 });
+  await enabled.waitFor({ timeout: 5000 });
+}
+
+async function closeTemporaryChat(page, url) {
+  await startNewChat(page, url);
 }
 
 async function confirmChatSession(page) {
