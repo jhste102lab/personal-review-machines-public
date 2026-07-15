@@ -8,7 +8,8 @@ const chatgptUrl = args.url || process.env.PRM_CHATGPT_URL || "https://chatgpt.c
 const cdpUrl = args.cdp || process.env.PRM_CDP_URL || `http://127.0.0.1:${process.env.PRM_CDP_PORT || "9222"}`;
 const modelName = args.model || "ChatGPT Pro Extended";
 const reasoningLevel = args["reasoning-level"] || "Pro";
-const sessionConfirmationTimeoutMs = 20_000;
+const sessionConfirmationTimeoutMs = 90_000;
+const tabCloseDelayMs = 30 * 60 * 1000;
 const cloakDir = process.env.PRM_CLOAK_DIR;
 
 if (!cloakDir) {
@@ -46,24 +47,18 @@ if (browser) {
       reasoningLevel,
       sessionUrl,
     }));
+    await page.evaluate((delay) => setTimeout(() => window.close(), delay), tabCloseDelayMs);
+    process.exit(0);
   } catch (error) {
     // A failure after clicking Send is delivery-uncertain: ChatGPT may keep
     // running server-side and publish the GitHub review after this process
     // exits. The worker uses a distinct exit code to avoid duplicate retries.
     console.error(error);
-    process.exitCode = promptSubmitAttempted ? 76 : 77;
+    process.exit(promptSubmitAttempted ? 76 : 77);
   } finally {
-    // The prompt continues server-side; retaining the dedicated tab only leaks
-    // one renderer per review and eventually exhausts host CPU and memory.
-    if (page) {
-      if (sessionCreated) {
-        await closeTemporaryChat(page, chatgptUrl).catch((error) => {
-          console.error(`temporary chat cleanup failed: ${error.message}`);
-        });
-      }
-      await page.close().catch(() => {});
-    }
-    await browser.close().catch(() => {});
+    // Do not close browser or page — CDP connection is dropped on process
+    // exit, but the ChatGPT tab stays open so the server-side generation
+    // continues and the operator can inspect the browser state.
   }
 }
 
@@ -157,16 +152,16 @@ async function closeTemporaryChat(page, url) {
 }
 
 async function confirmChatSession(page) {
-  await page.waitForURL(
-    (url) => /^\/c\/[^/]+$/.test(url.pathname),
-    { timeout: sessionConfirmationTimeoutMs },
-  );
-  const userMessage = page.locator('[data-message-author-role="user"]').last();
-  await userMessage.waitFor({ state: "visible", timeout: sessionConfirmationTimeoutMs });
-  const submittedText = (await userMessage.innerText()).trim();
-  if (!submittedText) {
-    throw new Error("ChatGPT created a conversation without preserving the submitted prompt");
-  }
+  const signals = [
+    page.waitForURL(
+      (url) => /^\/c\/[^/]+$/.test(url.pathname),
+      { timeout: sessionConfirmationTimeoutMs },
+    ).then(() => "url_changed"),
+    page.locator('[data-message-author-role="user"]').last()
+      .waitFor({ state: "visible", timeout: sessionConfirmationTimeoutMs })
+      .then(() => "user_message"),
+  ];
+  await Promise.race(signals).catch(() => { throw new Error("ChatGPT session confirmation timed out"); });
   return page.url();
 }
 

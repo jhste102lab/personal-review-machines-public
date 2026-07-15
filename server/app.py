@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import json
 import logging
+import random
 import subprocess
 import threading
 import time
@@ -19,14 +20,14 @@ LOG = logging.getLogger("personal-review-machines")
 
 
 class LaunchGate:
-    """Keep independent review processes from starting at the same instant."""
+    """Stagger review job starts with a random interval to avoid web chat throttling."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._next_start_at = 0.0
 
-    def wait_for_turn(self, interval_seconds: int) -> None:
-        interval = max(0, interval_seconds)
+    def wait_for_turn(self, min_seconds: int, max_seconds: int) -> None:
+        interval = random.uniform(min_seconds, max(max_seconds, min_seconds))
         while True:
             with self._lock:
                 now = time.monotonic()
@@ -196,7 +197,10 @@ def _dispatch_job(
         if job is None:
             LOG.info("skipping job repo=%s comment_id=%s; it is no longer due", repository, comment_id)
             return
-        launch_gate.wait_for_turn(config.job_start_interval_seconds)
+        if job.engine in CHATGPT_ENGINES:
+            launch_gate.wait_for_turn(10, 20)
+        else:
+            launch_gate.wait_for_turn(config.job_start_interval_seconds, config.job_start_interval_seconds)
         _run_job(config, store, launch_gate, job)
     except Exception:
         LOG.exception("review dispatch failed repo=%s comment_id=%s", repository, comment_id)
