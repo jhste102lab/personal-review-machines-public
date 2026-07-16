@@ -2,10 +2,12 @@
 set -euo pipefail
 
 INTERVAL_SECONDS="${PRM_BROWSER_SUPERVISE_INTERVAL_SECONDS:-30}"
+GITHUB_APPROVE_INTERVAL_SECONDS="${PRM_GITHUB_APPROVE_INTERVAL_SECONDS:-30}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
 EXTRA_CDP_PORTS=""
 LOG_PREFIX="chatgpt-browser-supervise"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+last_github_approve_epoch=0
 
 browser_healthy() {
   curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1 || return 1
@@ -22,6 +24,17 @@ while true; do
     "${SCRIPT_DIR}/chatgpt-browser-stop" || true
     if ! "${SCRIPT_DIR}/chatgpt-browser-start"; then
       echo "${LOG_PREFIX}: chatgpt-browser-start failed" >&2
+    fi
+  elif [ "$GITHUB_APPROVE_INTERVAL_SECONDS" -gt 0 ]; then
+    now_epoch="$(date +%s)"
+    if [ "$((now_epoch - last_github_approve_epoch))" -ge "$GITHUB_APPROVE_INTERVAL_SECONDS" ]; then
+      if output="$(PRM_CDP_PORT="${CDP_PORT}" "${SCRIPT_DIR}/chatgpt-github-approve" 2>&1)"; then
+        approved_count="$(printf '%s\n' "$output" | sed -n 's/.*"approved":\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+        if [ -n "${approved_count:-}" ] && [ "${approved_count:-0}" -gt 0 ]; then
+          echo "${LOG_PREFIX}: auto-approved ${approved_count} GitHub permission prompt(s)"
+        fi
+      fi
+      last_github_approve_epoch="$now_epoch"
     fi
   fi
   sleep "${INTERVAL_SECONDS}"

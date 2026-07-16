@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CDP_PORT="${PRM_CDP_PORT:-9222}"
+
+if ! curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; then
+  echo "chatgpt-github-approve: CDP is down on port ${CDP_PORT}" >&2
+  exit 1
+fi
+
+exec env PRM_CDP_PORT="${CDP_PORT}" node "${SCRIPT_DIR}/chatgpt-github-approve.mjs"
