@@ -2,10 +2,12 @@
 /**
  * Long-lived CloakBrowser for personal-review-machines CDP access.
  *
- * CPU policy:
- * - Keep the browser/CDP process warm (profile + cookies).
+ * Resource policy:
+ * - Keep the browser/CDP process warm (profile + cookies) while supervised.
  * - Do NOT keep chatgpt.com rendered while idle.
- * - Park idle ChatGPT tabs to about:blank; review jobs open fresh pages.
+ * - Reap finished/stale ChatGPT pages with page.close() — never accumulate
+ *   parked about:blank tabs. Exactly one park page stays for CDP health.
+ * - Review jobs open fresh pages; generation continues after send lease ends.
  */
 import { pathToFileURL } from "node:url";
 
@@ -15,11 +17,13 @@ const cloakDir = process.env.PRM_CLOAK_DIR;
 const parkUrl = process.env.PRM_PARK_URL || "about:blank";
 // Default: start parked. Set PRM_BROWSER_START_URL=https://chatgpt.com/ only for debugging.
 const startUrl = process.env.PRM_BROWSER_START_URL || parkUrl;
-const parkIntervalMs = positiveInt(process.env.PRM_PARK_INTERVAL_MS, 60_000);
-// Conversation tabs already self-close after 30m in review; park leftovers a bit later.
+const reapIntervalMs = positiveInt(process.env.PRM_PARK_INTERVAL_MS, 30_000);
+// Hard upper bound for any leftover ChatGPT tab (conversation or otherwise).
 const tabMaxAgeMs = positiveInt(process.env.PRM_TAB_MAX_AGE_MS, 35 * 60 * 1000);
-// Root chatgpt.com pages with no generation park after this much time on-page.
-const rootIdleParkMs = positiveInt(process.env.PRM_ROOT_IDLE_PARK_MS, 90_000);
+// After generation UI disappears, close the conversation after this grace.
+const generationDoneCloseMs = positiveInt(process.env.PRM_GENERATION_DONE_CLOSE_MS, 5 * 60 * 1000);
+// Root chatgpt.com pages with no generation close after this much idle time.
+const rootIdleCloseMs = positiveInt(process.env.PRM_ROOT_IDLE_PARK_MS, 90_000);
 
 if (!userDataDir) {
   throw new Error("PRM_BROWSER_PROFILE_DIR is required");
@@ -55,10 +59,13 @@ const context = await cloakbrowser.launchPersistentContext({
 const page = context.pages()[0] || await context.newPage();
 await page.goto(startUrl).catch(() => {});
 
-let parkTimer = null;
+/** @type {WeakMap<object, number>} page -> monotonic ms when first observed not-generating */
+const notGeneratingSince = new WeakMap();
+
+let reapTimer = null;
 const shutdown = async () => {
-  if (parkTimer) {
-    clearInterval(parkTimer);
+  if (reapTimer) {
+    clearInterval(reapTimer);
   }
   await context.close().catch(() => {});
   process.exit(0);
@@ -66,69 +73,122 @@ const shutdown = async () => {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-parkTimer = setInterval(() => {
-  parkIdlePages(context).catch((error) => {
-    console.error(`[prm-cloak] park_idle_failed ${error?.message || error}`);
+reapTimer = setInterval(() => {
+  reapPages(context).catch((error) => {
+    console.error(`[prm-cloak] reap_failed ${error?.message || error}`);
   });
-}, parkIntervalMs);
-// Allow the process to exit on signals even if the timer is the only handle.
-if (typeof parkTimer.unref === "function") {
-  parkTimer.unref();
+}, reapIntervalMs);
+if (typeof reapTimer.unref === "function") {
+  reapTimer.unref();
 }
 
-// Keep event loop alive for the browser child; park timer alone may unref.
+// Keep event loop alive for the browser child; reap timer alone may unref.
 setInterval(() => {}, 60_000);
 
-async function parkIdlePages(browserContext) {
-  const pages = browserContext.pages();
-  for (const target of pages) {
+async function reapPages(browserContext) {
+  const now = Date.now();
+  const live = browserContext.pages().filter((p) => !p.isClosed());
+  /** @type {object[]} */
+  const parkCandidates = [];
+
+  for (const target of live) {
     if (target.isClosed()) {
       continue;
     }
     const url = safeUrl(target.url());
     if (!url || isParkedUrl(url)) {
+      parkCandidates.push(target);
       continue;
     }
+
     if (!isChatGptHost(url.hostname)) {
+      const onPageMs = await pageAgeMs(target).catch(() => 0);
+      if (onPageMs >= tabMaxAgeMs) {
+        console.log(`[prm-cloak] close_foreign age_ms=${Math.round(onPageMs)} url=${clipUrl(url)}`);
+        await closePage(target);
+      }
       continue;
     }
 
     const generating = await isLikelyGenerating(target).catch(() => true);
     if (generating) {
+      notGeneratingSince.delete(target);
       continue;
     }
 
+    const firstIdle = notGeneratingSince.get(target) ?? now;
+    notGeneratingSince.set(target, firstIdle);
+    const idleMs = now - firstIdle;
     const onPageMs = await pageAgeMs(target).catch(() => 0);
     const path = url.pathname || "/";
     const isRoot = path === "/" || path === "";
     const isConversation = /^\/c\//.test(path);
 
-    if (isRoot && onPageMs >= rootIdleParkMs) {
-      console.log(`[prm-cloak] park_root url=${url.origin}${path}`);
-      await target.goto(parkUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
-      continue;
-    }
-
-    if (isConversation && onPageMs >= tabMaxAgeMs) {
-      console.log(`[prm-cloak] close_stale_conversation age_ms=${Math.round(onPageMs)}`);
-      const closed = await target.close().catch(() => false);
-      if (closed === false) {
-        await target.goto(parkUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+    if (isConversation) {
+      if (idleMs >= generationDoneCloseMs || onPageMs >= tabMaxAgeMs) {
+        console.log(
+          `[prm-cloak] close_conversation idle_ms=${Math.round(idleMs)} age_ms=${Math.round(onPageMs)}`,
+        );
+        await closePage(target);
       }
       continue;
     }
 
-    // Leftover non-conversation ChatGPT surfaces (settings, auth, etc.) after long idle.
-    if (!isRoot && !isConversation && onPageMs >= tabMaxAgeMs) {
-      console.log(`[prm-cloak] park_stale path=${path} age_ms=${Math.round(onPageMs)}`);
-      await target.goto(parkUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+    if (isRoot) {
+      if (idleMs >= rootIdleCloseMs || onPageMs >= tabMaxAgeMs) {
+        console.log(`[prm-cloak] close_root idle_ms=${Math.round(idleMs)} age_ms=${Math.round(onPageMs)}`);
+        await closePage(target);
+      }
+      continue;
+    }
+
+    // Settings / auth / other ChatGPT surfaces.
+    if (idleMs >= generationDoneCloseMs || onPageMs >= tabMaxAgeMs) {
+      console.log(`[prm-cloak] close_stale path=${path} idle_ms=${Math.round(idleMs)}`);
+      await closePage(target);
     }
   }
 
-  // Probe and CDP clients expect at least one live page/context.
-  if (browserContext.pages().filter((p) => !p.isClosed()).length === 0) {
+  await collapseParkPages(browserContext, parkCandidates);
+}
+
+async function collapseParkPages(browserContext, parkCandidates) {
+  // Re-read live set; some parkCandidates may have been closed.
+  const parked = [];
+  for (const target of browserContext.pages()) {
+    if (target.isClosed()) {
+      continue;
+    }
+    const url = safeUrl(target.url());
+    if (url && isParkedUrl(url)) {
+      parked.push(target);
+    }
+  }
+
+  // Keep exactly one park page for CDP health / connectOverCDP.
+  while (parked.length > 1) {
+    const extra = parked.pop();
+    console.log("[prm-cloak] close_extra_park");
+    await closePage(extra);
+  }
+
+  const remaining = browserContext.pages().filter((p) => !p.isClosed());
+  if (remaining.length === 0) {
     const fresh = await browserContext.newPage();
     await fresh.goto(parkUrl).catch(() => {});
+    console.log("[prm-cloak] ensure_park_page");
+  }
+}
+
+async function closePage(target) {
+  notGeneratingSince.delete(target);
+  if (target.isClosed()) {
+    return;
+  }
+  const closed = await target.close().catch(() => false);
+  if (closed === false && !target.isClosed()) {
+    // Last-resort navigate away so renderer is cheap if close is blocked.
+    await target.goto(parkUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
   }
 }
 
@@ -161,7 +221,6 @@ async function isLikelyGenerating(target) {
       }
     }
 
-    // Streaming / in-progress affordances ChatGPT has used over time.
     const busySelectors = [
       '[data-testid="composer-speech-button"][aria-disabled="true"]',
       ".result-streaming",
@@ -181,10 +240,7 @@ async function isLikelyGenerating(target) {
 }
 
 async function pageAgeMs(target) {
-  return target.evaluate(() => {
-    // timeorigin-relative; resets on navigation — intended for per-page lifetime.
-    return performance.now();
-  });
+  return target.evaluate(() => performance.now());
 }
 
 function isChatGptHost(hostname) {
@@ -204,6 +260,14 @@ function safeUrl(raw) {
     return new URL(String(raw || ""));
   } catch {
     return null;
+  }
+}
+
+function clipUrl(url) {
+  try {
+    return `${url.origin}${url.pathname}`.slice(0, 120);
+  } catch {
+    return "";
   }
 }
 

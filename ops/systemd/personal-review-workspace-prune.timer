@@ -1,0 +1,11 @@
+[Unit]
+Description=Prune inactive personal-review workspaces daily
+
+[Timer]
+OnCalendar=*-*-* 04:55:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=personal-review-workspace-prune.service
+
+[Install]
+WantedBy=timers.target

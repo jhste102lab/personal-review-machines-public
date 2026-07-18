@@ -9,7 +9,11 @@ const cdpUrl = args.cdp || process.env.PRM_CDP_URL || `http://127.0.0.1:${proces
 const modelName = args.model || "ChatGPT Pro Extended";
 const reasoningLevel = args["reasoning-level"] || "Pro";
 const sessionConfirmationTimeoutMs = 90_000;
-const tabCloseDelayMs = 30 * 60 * 1000;
+// Soft hint only; cloak-launch reaper is the source of truth for tab close.
+const tabCloseDelayMs = positiveInt(process.env.PRM_TAB_CLOSE_DELAY_MS, 30 * 60 * 1000);
+// Hard cap on non-park pages in this browser while a new review tab is opened.
+const maxGeneratingTabs = positiveInt(process.env.PRM_MAX_GENERATING_TABS_PER_SLOT, 4);
+const generatingWaitMs = positiveInt(process.env.PRM_GENERATING_WAIT_MS, 30 * 60 * 1000);
 const cloakDir = process.env.PRM_CLOAK_DIR;
 
 if (!cloakDir) {
@@ -37,6 +41,8 @@ if (browser) {
   try {
     const context = browser.contexts()[0] || await browser.newContext();
     await cleanupBrokenPages(context);
+    await collapseExtraParkPages(context);
+    await waitForGenerationCapacity(context);
     page = await openChatPage(context, chatgptUrl);
     const sessionUrl = await sendPromptWithGithub(page, prompt, reasoningLevel);
     console.log(JSON.stringify({
@@ -47,7 +53,8 @@ if (browser) {
       sessionUrl,
       cdpUrl,
     }));
-    // Keep the tab open so server-side generation can finish; auto-close later.
+    // Keep the tab open so server-side generation can finish.
+    // cloak-launch reaper closes after generation settles; this is a backup.
     await page.evaluate((delay) => setTimeout(() => window.close(), delay), tabCloseDelayMs).catch(() => {});
     process.exit(0);
   } catch (error) {
@@ -89,6 +96,74 @@ function requiredArg(parsed, name) {
     throw new Error(`--${name} is required`);
   }
   return parsed[name];
+}
+
+function positiveInt(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    return fallback;
+  }
+  return Math.floor(n);
+}
+
+function isParkedUrlString(url) {
+  const raw = String(url || "");
+  return raw === "" || raw === "about:blank" || raw.startsWith("about:")
+    || raw.startsWith("chrome:") || raw.startsWith("chrome-error:")
+    || raw.startsWith("devtools:");
+}
+
+function countBusyPages(context) {
+  let count = 0;
+  for (const target of context.pages()) {
+    if (target.isClosed()) {
+      continue;
+    }
+    if (!isParkedUrlString(target.url())) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+async function collapseExtraParkPages(context) {
+  const parked = [];
+  for (const target of context.pages()) {
+    if (target.isClosed()) {
+      continue;
+    }
+    if (isParkedUrlString(target.url())) {
+      parked.push(target);
+    }
+  }
+  while (parked.length > 1) {
+    const extra = parked.pop();
+    await extra.close().catch(() => {});
+  }
+  if (context.pages().filter((item) => !item.isClosed()).length === 0) {
+    await context.newPage().catch(() => {});
+  }
+}
+
+async function waitForGenerationCapacity(context) {
+  const deadline = Date.now() + generatingWaitMs;
+  while (Date.now() < deadline) {
+    await collapseExtraParkPages(context);
+    const busy = countBusyPages(context);
+    if (busy < maxGeneratingTabs) {
+      return;
+    }
+    console.error(JSON.stringify({
+      phase: "wait_generation_capacity",
+      busy,
+      maxGeneratingTabs,
+      cdpUrl,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  throw new Error(
+    `ChatGPT generation capacity wait timed out busy>=${maxGeneratingTabs} cdp=${cdpUrl}`,
+  );
 }
 
 async function cleanupBrokenPages(context) {

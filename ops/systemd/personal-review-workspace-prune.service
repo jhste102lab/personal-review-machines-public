@@ -1,0 +1,6 @@
+[Unit]
+Description=Prune inactive personal-review workspaces
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/jjh/services/personal-review-machines/scripts/prune-review-workspaces.py --work-dir %h/.local/state/personal-review-machines/work --older-than-days 7 --apply

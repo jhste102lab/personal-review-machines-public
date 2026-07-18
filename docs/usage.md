@@ -125,6 +125,19 @@ Webhook daemon은 `work_dir` 아래 임시 디렉터리에 checkout, prompt, log
 comment 파일을 둡니다. legacy workflow의 `context.md`와 `pr.diff`는
 `GITHUB_WORKSPACE/.tmp/mention-pr-review/<run>-<comment>/` 아래에 저장됩니다.
 
+OpenCode reviewer는 같은 PR/comment의 세션 재개를 위해 workspace를 유지한다. 누적을
+막기 위해 `ops/systemd/personal-review-workspace-prune.timer`를 설치하면, 실행 중인
+workspace는 건드리지 않고 7일보다 오래된 비활성 workspace를 매일 정리한다. 즉시
+점검은 아래처럼 dry-run으로 먼저 한다.
+
+```bash
+python3 scripts/prune-review-workspaces.py \
+  --work-dir ~/.local/state/personal-review-machines/work
+```
+
+`--all-inactive --apply`는 보존 기간을 무시하므로, 현재 실행 중인 프로세스가 없는지
+확인한 일회성 정리에서만 사용한다.
+
 ## public repo 사용
 
 public repo에서도 기본은 mention-triggered review입니다. 요청이 매칭되면 base repo의 `refs/pull/<number>/head`를 임시 checkout하지만, PR code 실행과 쓰기 작업은 금지하고 읽기 전용 탐색만 허용합니다.

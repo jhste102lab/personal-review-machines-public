@@ -98,10 +98,14 @@ cp config.example.json config.json
 ```
 
 요청은 이전 리뷰 완료를 기다리지 않고 각각 독립적으로 실행합니다. 단, 외부 모델에
-프로세스를 시작하는 순간만 기본 15초 간격으로 분산합니다. ChatGPT 작업은 같은 CDP
-브라우저 안에서 작업별 독립 페이지/새 채팅을 열고, GitHub 앱 연결과 사고 레벨 선택 뒤
-PR 프롬프트가 새 ChatGPT 세션에 저장된 것을 확인하면 작업을 끝냅니다. ChatGPT의
-GitHub 댓글·리뷰 게시 여부는 이 서비스가 확인하지 않습니다.
+프로세스를 시작하는 순간만 기본 15초 간격으로 분산합니다. ChatGPT 작업은 CDP
+브라우저 슬롯 lease로 프롬프트 전송만 직렬화하고, 전송 후 generation 탭은 슬롯 밖에서
+병렬로 유지합니다. 슬롯당 동시 generation 탭 수는 `PRM_MAX_GENERATING_TABS_PER_SLOT`
+(기본 4)로 제한합니다. 완료·유휴 탭은 cloak-launch reaper가 `page.close()`로 회수하고,
+park page는 슬롯당 1개만 남깁니다. 모든 슬롯이 park-only 상태로
+`PRM_BROWSER_IDLE_STOP_SECONDS`(기본 900) 동안 유지되면 browser helper를 중지하고,
+다음 ChatGPT job이 `chatgpt-browser-start`로 다시 기동합니다. ChatGPT의 GitHub
+댓글·리뷰 게시 여부는 이 서비스가 확인하지 않습니다.
 
 3. 대상 repo의 webhook을 추가합니다.
 

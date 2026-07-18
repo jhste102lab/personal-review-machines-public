@@ -3,11 +3,16 @@ set -euo pipefail
 
 INTERVAL_SECONDS="${PRM_BROWSER_SUPERVISE_INTERVAL_SECONDS:-30}"
 GITHUB_APPROVE_INTERVAL_SECONDS="${PRM_GITHUB_APPROVE_INTERVAL_SECONDS:-30}"
+# After all slots have only park pages for this long, stop chromium to free CPU.
+# Jobs call chatgpt-browser-start via _ensure_chatgpt_browser_ready before send.
+IDLE_STOP_SECONDS="${PRM_BROWSER_IDLE_STOP_SECONDS:-900}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
 EXTRA_CDP_PORTS="${EXTRA_CDP_PORTS:-}"
 LOG_PREFIX="chatgpt-browser-supervise"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 last_github_approve_epoch=0
+idle_since_epoch=0
+idle_stopped=0
 
 cdp_ports() {
   printf '%s\n' "${CDP_PORT}"
@@ -27,29 +32,83 @@ browser_healthy() {
   return 0
 }
 
-while true; do
-  needs_start=0
-  if ! browser_healthy; then
-    needs_start=1
-  fi
-  if [ "$needs_start" -eq 1 ]; then
-    echo "${LOG_PREFIX}: CDP is unhealthy; restarting browser helpers"
-    "${SCRIPT_DIR}/chatgpt-browser-stop" || true
-    if ! "${SCRIPT_DIR}/chatgpt-browser-start"; then
-      echo "${LOG_PREFIX}: chatgpt-browser-start failed" >&2
+# Returns 0 when every reachable slot has zero non-park pages (or CDP is down).
+all_slots_idle() {
+  local port busy
+  for port in $(cdp_ports); do
+    if ! curl -fsS "http://127.0.0.1:${port}/json/version" >/dev/null 2>&1; then
+      return 1
     fi
-  elif [ "$GITHUB_APPROVE_INTERVAL_SECONDS" -gt 0 ]; then
-    now_epoch="$(date +%s)"
-    if [ "$((now_epoch - last_github_approve_epoch))" -ge "$GITHUB_APPROVE_INTERVAL_SECONDS" ]; then
-      for port in $(cdp_ports); do
-        if output="$(PRM_CDP_PORT="${port}" "${SCRIPT_DIR}/chatgpt-github-approve" 2>&1)"; then
-          approved_count="$(printf '%s\n' "$output" | sed -n 's/.*"approved":\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
-          if [ -n "${approved_count:-}" ] && [ "${approved_count:-0}" -gt 0 ]; then
-            echo "${LOG_PREFIX}: auto-approved ${approved_count} GitHub permission prompt(s) on :${port}"
+    busy="$(curl -fsS "http://127.0.0.1:${port}/json" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    targets = json.load(sys.stdin)
+except Exception:
+    print(1)
+    raise SystemExit(0)
+busy = 0
+for t in targets:
+    if t.get("type") not in (None, "page", "iframe", "other", "background_page", "worker"):
+        # Count only page-like targets with real URLs.
+        pass
+    url = str(t.get("url") or "")
+    ttype = str(t.get("type") or "page")
+    if ttype not in ("page", "background_page"):
+        continue
+    if not url or url == "about:blank" or url.startswith("about:") or url.startswith("chrome") or url.startswith("devtools:"):
+        continue
+    busy += 1
+print(busy)
+' 2>/dev/null || echo 1)"
+    if [ "${busy:-1}" -gt 0 ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+while true; do
+  if browser_healthy; then
+    idle_stopped=0
+    if [ "$GITHUB_APPROVE_INTERVAL_SECONDS" -gt 0 ]; then
+      now_epoch="$(date +%s)"
+      if [ "$((now_epoch - last_github_approve_epoch))" -ge "$GITHUB_APPROVE_INTERVAL_SECONDS" ]; then
+        for port in $(cdp_ports); do
+          if output="$(PRM_CDP_PORT="${port}" "${SCRIPT_DIR}/chatgpt-github-approve" 2>&1)"; then
+            approved_count="$(printf '%s\n' "$output" | sed -n 's/.*"approved":\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+            if [ -n "${approved_count:-}" ] && [ "${approved_count:-0}" -gt 0 ]; then
+              echo "${LOG_PREFIX}: auto-approved ${approved_count} GitHub permission prompt(s) on :${port}"
+            fi
           fi
-        fi
-      done
-      last_github_approve_epoch="$now_epoch"
+        done
+        last_github_approve_epoch="$now_epoch"
+      fi
+    fi
+
+    if [ "${IDLE_STOP_SECONDS}" -gt 0 ] && all_slots_idle; then
+      now_epoch="$(date +%s)"
+      if [ "${idle_since_epoch}" -eq 0 ]; then
+        idle_since_epoch="${now_epoch}"
+      elif [ "$((now_epoch - idle_since_epoch))" -ge "${IDLE_STOP_SECONDS}" ]; then
+        echo "${LOG_PREFIX}: idle ${IDLE_STOP_SECONDS}s with only park pages; stopping browser helpers"
+        "${SCRIPT_DIR}/chatgpt-browser-stop" || true
+        idle_stopped=1
+        idle_since_epoch=0
+      fi
+    else
+      idle_since_epoch=0
+    fi
+  else
+    # When we intentionally drained idle browsers, stay down until a job
+    # calls chatgpt-browser-start (or an operator starts helpers).
+    if [ "${idle_stopped}" -eq 1 ]; then
+      idle_since_epoch=0
+    else
+      echo "${LOG_PREFIX}: CDP is unhealthy; restarting browser helpers"
+      "${SCRIPT_DIR}/chatgpt-browser-stop" || true
+      if ! "${SCRIPT_DIR}/chatgpt-browser-start"; then
+        echo "${LOG_PREFIX}: chatgpt-browser-start failed" >&2
+      fi
     fi
   fi
   sleep "${INTERVAL_SECONDS}"
