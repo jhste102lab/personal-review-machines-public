@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import json
 import os
 import re
@@ -10,9 +11,11 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .config import Config
 
@@ -80,6 +83,10 @@ CHATGPT_CONNECT_FAILURE_EXIT_CODE = 75
 CHATGPT_PRE_SEND_FAILURE_EXIT_CODE = 77
 CHATGPT_SESSION_CONFIRMATION_TIMEOUT_SECONDS = 180
 MARKER_API_TIMEOUT_SECONDS = 20
+# Exclusive lease while a job drives the browser (open tab → send → confirm).
+# Generation continues in the tab after the lease is released.
+_CHATGPT_SLOT_RR_LOCK = threading.Lock()
+_CHATGPT_SLOT_RR_INDEX = 0
 
 CLAUDE_REVIEW_EFFORT = "high"
 
@@ -470,22 +477,100 @@ def _null_context():
 
 
 class _ChatGPTBrowserSlot:
-    def __init__(self, engine: str, log: object) -> None:
+    def __init__(self, engine: str, log: object, cdp_url: str, lock_path: Path, lock_fd: int) -> None:
         self.engine = engine
         self.log = log
-        self.cdp_url = CHATGPT_DEFAULT_CDP_URL
+        self.cdp_url = cdp_url
+        self._lock_path = lock_path
+        self._lock_fd = lock_fd
 
     def __enter__(self):
-        self.log.write(f"ChatGPT browser session assigned: {self.cdp_url}\n")
+        self.log.write(
+            f"ChatGPT browser send lease acquired: {self.cdp_url} lock={self._lock_path}\n"
+        )
         self.log.flush()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._lock_fd)
+        self.log.write(f"ChatGPT browser send lease released: {self.cdp_url}\n")
+        self.log.flush()
         return None
 
 
+def _chatgpt_cdp_urls() -> list[str]:
+    raw = os.environ.get("PRM_CHATGPT_CDP_URLS", "").strip()
+    if raw:
+        urls = [item.strip() for item in raw.split(",") if item.strip()]
+        if urls:
+            return urls
+    ports: list[str] = []
+    primary = (os.environ.get("PRM_CDP_PORT") or "9222").strip()
+    if primary:
+        ports.append(primary)
+    for item in (os.environ.get("EXTRA_CDP_PORTS") or "").split():
+        port = item.strip()
+        if port and port not in ports:
+            ports.append(port)
+    return [f"http://127.0.0.1:{port}" for port in ports] or [CHATGPT_DEFAULT_CDP_URL]
+
+
+def _chatgpt_slot_lock_dir() -> Path:
+    raw = os.environ.get("PRM_CHATGPT_SLOT_LOCK_DIR", "").strip()
+    if raw:
+        path = Path(raw)
+    else:
+        path = Path(tempfile.gettempdir()) / "prm-chatgpt-slots"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _chatgpt_slot_lock_path(cdp_url: str) -> Path:
+    parsed = urlparse(cdp_url)
+    host = (parsed.hostname or "127.0.0.1").replace(":", "_")
+    port = parsed.port or 9222
+    return _chatgpt_slot_lock_dir() / f"{host}-{port}.lock"
+
+
+def _try_lock_slot(cdp_url: str) -> tuple[Path, int] | None:
+    lock_path = _chatgpt_slot_lock_path(cdp_url)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return lock_path, fd
+
+
+def _blocking_lock_slot(cdp_url: str) -> tuple[Path, int]:
+    lock_path = _chatgpt_slot_lock_path(cdp_url)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return lock_path, fd
+
+
 def _chatgpt_browser_slot(engine: str, log: object) -> _ChatGPTBrowserSlot:
-    return _ChatGPTBrowserSlot(engine, log)
+    urls = _chatgpt_cdp_urls()
+    global _CHATGPT_SLOT_RR_INDEX
+    with _CHATGPT_SLOT_RR_LOCK:
+        start = _CHATGPT_SLOT_RR_INDEX % len(urls)
+        _CHATGPT_SLOT_RR_INDEX = start + 1
+    ordered = urls[start:] + urls[:start]
+    for cdp_url in ordered:
+        locked = _try_lock_slot(cdp_url)
+        if locked is not None:
+            lock_path, lock_fd = locked
+            return _ChatGPTBrowserSlot(engine, log, cdp_url, lock_path, lock_fd)
+    # All slots busy with another send — wait on the preferred slot.
+    cdp_url = ordered[0]
+    log.write(f"ChatGPT browser send lease waiting on busy slot: {cdp_url}\n")
+    log.flush()
+    lock_path, lock_fd = _blocking_lock_slot(cdp_url)
+    return _ChatGPTBrowserSlot(engine, log, cdp_url, lock_path, lock_fd)
 
 def _agent_command(
     config: Config,

@@ -197,8 +197,11 @@ def _dispatch_job(
         if job is None:
             LOG.info("skipping job repo=%s comment_id=%s; it is no longer due", repository, comment_id)
             return
+        # ChatGPT send concurrency is limited by per-CDP slot leases in
+        # review_runner (open/send critical section only). Keep a short
+        # start stagger so checkout storms do not pile up.
         if job.engine in CHATGPT_ENGINES:
-            launch_gate.wait_for_turn(10, 20)
+            launch_gate.wait_for_turn(5, 10)
         else:
             launch_gate.wait_for_turn(config.job_start_interval_seconds, config.job_start_interval_seconds)
         _run_job(config, store, launch_gate, job)

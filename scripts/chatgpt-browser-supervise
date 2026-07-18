@@ -4,14 +4,27 @@ set -euo pipefail
 INTERVAL_SECONDS="${PRM_BROWSER_SUPERVISE_INTERVAL_SECONDS:-30}"
 GITHUB_APPROVE_INTERVAL_SECONDS="${PRM_GITHUB_APPROVE_INTERVAL_SECONDS:-30}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
-EXTRA_CDP_PORTS=""
+EXTRA_CDP_PORTS="${EXTRA_CDP_PORTS:-}"
 LOG_PREFIX="chatgpt-browser-supervise"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 last_github_approve_epoch=0
 
+cdp_ports() {
+  printf '%s\n' "${CDP_PORT}"
+  for port in ${EXTRA_CDP_PORTS}; do
+    if [ -n "$port" ] && [ "$port" != "${CDP_PORT}" ]; then
+      printf '%s\n' "$port"
+    fi
+  done
+}
+
 browser_healthy() {
-  curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1 || return 1
-  PRM_CDP_PORT="${CDP_PORT}" node "${SCRIPT_DIR}/chatgpt-browser-probe.mjs" >/dev/null 2>&1
+  local port
+  for port in $(cdp_ports); do
+    curl -fsS "http://127.0.0.1:${port}/json/version" >/dev/null 2>&1 || return 1
+    PRM_CDP_PORT="${port}" node "${SCRIPT_DIR}/chatgpt-browser-probe.mjs" >/dev/null 2>&1 || return 1
+  done
+  return 0
 }
 
 while true; do
@@ -28,12 +41,14 @@ while true; do
   elif [ "$GITHUB_APPROVE_INTERVAL_SECONDS" -gt 0 ]; then
     now_epoch="$(date +%s)"
     if [ "$((now_epoch - last_github_approve_epoch))" -ge "$GITHUB_APPROVE_INTERVAL_SECONDS" ]; then
-      if output="$(PRM_CDP_PORT="${CDP_PORT}" "${SCRIPT_DIR}/chatgpt-github-approve" 2>&1)"; then
-        approved_count="$(printf '%s\n' "$output" | sed -n 's/.*"approved":\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
-        if [ -n "${approved_count:-}" ] && [ "${approved_count:-0}" -gt 0 ]; then
-          echo "${LOG_PREFIX}: auto-approved ${approved_count} GitHub permission prompt(s)"
+      for port in $(cdp_ports); do
+        if output="$(PRM_CDP_PORT="${port}" "${SCRIPT_DIR}/chatgpt-github-approve" 2>&1)"; then
+          approved_count="$(printf '%s\n' "$output" | sed -n 's/.*"approved":\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+          if [ -n "${approved_count:-}" ] && [ "${approved_count:-0}" -gt 0 ]; then
+            echo "${LOG_PREFIX}: auto-approved ${approved_count} GitHub permission prompt(s) on :${port}"
+          fi
         fi
-      fi
+      done
       last_github_approve_epoch="$now_epoch"
     fi
   fi

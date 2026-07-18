@@ -5,7 +5,9 @@ DISPLAY_NUM="${PRM_DISPLAY:-:99}"
 VNC_PORT="${PRM_VNC_PORT:-5901}"
 NOVNC_PORT="${PRM_NOVNC_PORT:-6080}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
-EXTRA_CDP_PORTS=""
+# Space-separated extra remote-debugging ports, each with its own browser profile.
+# Example: EXTRA_CDP_PORTS="9223 9224" for parallel ChatGPT send slots.
+EXTRA_CDP_PORTS="${EXTRA_CDP_PORTS:-}"
 USER_HOME="${PRM_HOME_OVERRIDE:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
 if [ -z "${USER_HOME}" ]; then
   USER_HOME="${HOME:-/tmp}"

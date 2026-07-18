@@ -34,31 +34,34 @@ try {
 
 if (browser) {
   let page;
-  let sessionCreated = false;
   try {
     const context = browser.contexts()[0] || await browser.newContext();
+    await cleanupBrokenPages(context);
     page = await openChatPage(context, chatgptUrl);
     const sessionUrl = await sendPromptWithGithub(page, prompt, reasoningLevel);
-    sessionCreated = true;
     console.log(JSON.stringify({
       ok: true,
       phase: "chat-session-created",
       model: modelName,
       reasoningLevel,
       sessionUrl,
+      cdpUrl,
     }));
-    await page.evaluate((delay) => setTimeout(() => window.close(), delay), tabCloseDelayMs);
+    // Keep the tab open so server-side generation can finish; auto-close later.
+    await page.evaluate((delay) => setTimeout(() => window.close(), delay), tabCloseDelayMs).catch(() => {});
     process.exit(0);
   } catch (error) {
     // A failure after clicking Send is delivery-uncertain: ChatGPT may keep
     // running server-side and publish the GitHub review after this process
     // exits. The worker uses a distinct exit code to avoid duplicate retries.
     console.error(error);
+    if (!promptSubmitAttempted && page && !page.isClosed()) {
+      await page.close().catch(() => {});
+    }
     process.exit(promptSubmitAttempted ? 76 : 77);
   } finally {
-    // Do not close browser or page — CDP connection is dropped on process
-    // exit, but the ChatGPT tab stays open so the server-side generation
-    // continues and the operator can inspect the browser state.
+    // Do not close browser — CDP connection is dropped on process exit.
+    // Successful send leaves the page open for generation.
   }
 }
 
@@ -88,15 +91,44 @@ function requiredArg(parsed, name) {
   return parsed[name];
 }
 
+async function cleanupBrokenPages(context) {
+  const pages = context.pages();
+  for (const target of pages) {
+    if (target.isClosed()) {
+      continue;
+    }
+    const url = target.url();
+    const broken =
+      url.startsWith("chrome-error://")
+      || url.startsWith("chrome-untrusted://")
+      || url.includes("error-page")
+      || /HTTP ERROR\s+(403|429|431)/i.test(await target.locator("body").innerText().catch(() => ""));
+    if (!broken) {
+      continue;
+    }
+    console.error(JSON.stringify({ phase: "cleanup_broken_page", url }));
+    await target.close().catch(() => {});
+  }
+  // Keep at least one page alive for CDP health probes.
+  if (context.pages().filter((item) => !item.isClosed()).length === 0) {
+    await context.newPage().catch(() => {});
+  }
+}
+
 async function openChatPage(context, url) {
   // Every review gets its own page so parallel jobs cannot navigate or type
   // into one another's conversation.
   const page = await context.newPage();
   await page.bringToFront();
-  await startNewChat(page, url);
-  await page.waitForTimeout(2500);
-  await page.keyboard.press("Escape").catch(() => {});
-  return page;
+  try {
+    await startNewChat(page, url);
+    await page.waitForTimeout(2500);
+    await page.keyboard.press("Escape").catch(() => {});
+    return page;
+  } catch (error) {
+    await page.close().catch(() => {});
+    throw error;
+  }
 }
 
 async function startNewChat(page, url) {
@@ -104,7 +136,15 @@ async function startNewChat(page, url) {
   newChatUrl.pathname = "/";
   newChatUrl.search = "";
   newChatUrl.hash = "";
-  await page.goto(newChatUrl.toString(), { waitUntil: "domcontentloaded" }).catch(() => {});
+  const response = await page.goto(newChatUrl.toString(), {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  const status = response ? response.status() : 0;
+  if (status >= 400) {
+    const body = (await page.locator("body").innerText().catch(() => "")).slice(0, 200);
+    throw new Error(`ChatGPT navigation failed status=${status} body=${body}`);
+  }
   await page.locator("#prompt-textarea").first().waitFor({ timeout: 20_000 });
   const existingMessages = await page.locator('[data-message-author-role]').count();
   if (existingMessages > 0) {
@@ -145,10 +185,6 @@ async function enableTemporaryChat(page) {
   }).last();
   await disabled.click({ timeout: 5000 });
   await enabled.waitFor({ timeout: 5000 });
-}
-
-async function closeTemporaryChat(page, url) {
-  await startNewChat(page, url);
 }
 
 async function confirmChatSession(page) {
