@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
 import json
+import logging
 import os
 import re
 import shutil
@@ -18,6 +19,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .config import Config
+
+LOG = logging.getLogger("personal-review-machines")
 
 
 ENGINE_MENTIONS = {
@@ -81,7 +84,8 @@ CHATGPT_DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 # page/conversation exists and before the prompt can be submitted.
 CHATGPT_CONNECT_FAILURE_EXIT_CODE = 75
 CHATGPT_PRE_SEND_FAILURE_EXIT_CODE = 77
-CHATGPT_SESSION_CONFIRMATION_TIMEOUT_SECONDS = 180
+# Covers Cloudflare challenge wait (~120s) + send prep + session confirm (~90s).
+CHATGPT_SESSION_CONFIRMATION_TIMEOUT_SECONDS = 300
 MARKER_API_TIMEOUT_SECONDS = 20
 # Exclusive lease while a job drives the browser (open tab → send → confirm).
 # Generation continues in the tab after the lease is released.
@@ -234,6 +238,7 @@ def run_review(
             if engine in CHATGPT_ENGINES:
                 if exit_code == 0:
                     return ReviewOutcome(True, reason="chatgpt_session_created")
+                _persist_chatgpt_failure_log(log_path, repo, pr_number, comment_id, exit_code)
                 if exit_code == CHATGPT_CONNECT_FAILURE_EXIT_CODE:
                     return ReviewOutcome(
                         False,
@@ -252,6 +257,8 @@ def run_review(
             return ReviewOutcome(False, retryable=True, reason="marker_not_posted")
         except Exception as exc:
             log_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+            if engine in CHATGPT_ENGINES:
+                _persist_chatgpt_failure_log(log_path, repo, pr_number, comment_id, None)
             if post_failure and _post_failure(repo, pr_number, engine, marker, review_dir, log_path, failure_path):
                 return ReviewOutcome(True, reason="fallback_marker_posted")
             if engine in CHATGPT_ENGINES and agent_started:
@@ -268,6 +275,40 @@ def _review_workspace(review_root: Path, pr_number: int, comment_id: int, engine
         return
     with tempfile.TemporaryDirectory(prefix=f"pr-{pr_number}-{comment_id}-", dir=review_root) as tmp:
         yield Path(tmp)
+
+
+def _persist_chatgpt_failure_log(
+    log_path: Path,
+    repo: str,
+    pr_number: int,
+    comment_id: int,
+    exit_code: int | None,
+) -> None:
+    """Keep the last ChatGPT failure log outside the temp workspace."""
+    try:
+        if not log_path.exists():
+            return
+        cache_root = Path(
+            os.environ.get(
+                "PRM_FAILURE_ARTIFACT_DIR",
+                str(Path.home() / ".cache/personal-review-machines-chatgpt/failures"),
+            )
+        )
+        cache_root.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        safe_repo = repo.replace("/", "__")
+        dest = cache_root / f"review-{safe_repo}-pr{pr_number}-c{comment_id}-{stamp}.log"
+        header = (
+            f"# repo={repo} pr={pr_number} comment_id={comment_id} "
+            f"exit_code={exit_code} at={time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n"
+        )
+        dest.write_text(header + log_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+        # Bound disk use.
+        logs = sorted(cache_root.glob("review-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in logs[40:]:
+            old.unlink(missing_ok=True)
+    except Exception:
+        LOG.exception("failed to persist ChatGPT failure log")
 
 
 def _checkout_pr(repo: str, pr_number: int, checkout_dir: Path, *, reuse_existing: bool = False) -> None:
