@@ -9,6 +9,9 @@
  *   parked about:blank tabs. Exactly one park page stays for CDP health.
  * - Review jobs open fresh pages; generation continues after send lease ends.
  */
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const userDataDir = process.env.PRM_BROWSER_PROFILE_DIR;
@@ -24,6 +27,9 @@ const tabMaxAgeMs = positiveInt(process.env.PRM_TAB_MAX_AGE_MS, 35 * 60 * 1000);
 // retains the old grace period when an operator explicitly needs one.
 const generationDoneCloseMs = nonNegativeInt(process.env.PRM_GENERATION_DONE_CLOSE_MS, 0);
 const rootIdleCloseMs = nonNegativeInt(process.env.PRM_ROOT_IDLE_PARK_MS, 0);
+const slotLockDir = process.env.PRM_CHATGPT_SLOT_LOCK_DIR
+  || path.join(process.env.TMPDIR || "/tmp", "prm-chatgpt-slots");
+const slotLockPath = path.join(slotLockDir, `127.0.0.1-${cdpPort}.lock`);
 
 if (!userDataDir) {
   throw new Error("PRM_BROWSER_PROFILE_DIR is required");
@@ -86,6 +92,13 @@ if (typeof reapTimer.unref === "function") {
 setInterval(() => {}, 60_000);
 
 async function reapPages(browserContext) {
+  // A review worker holds this lease from browser preparation through prompt
+  // submission/session confirmation. The reaper cannot distinguish a root
+  // composer or Cloudflare page from an idle page, so it must not touch any
+  // page in a leased slot.
+  if (hasActiveSendLease()) {
+    return;
+  }
   const now = Date.now();
   const live = browserContext.pages().filter((p) => !p.isClosed());
   /** @type {object[]} */
@@ -150,6 +163,21 @@ async function reapPages(browserContext) {
   }
 
   await collapseParkPages(browserContext, parkCandidates);
+}
+
+function hasActiveSendLease() {
+  if (!fs.existsSync(slotLockPath)) {
+    return false;
+  }
+  const result = spawnSync("flock", ["-n", slotLockPath, "-c", "true"], {
+    stdio: "ignore",
+  });
+  // If lease inspection itself is unavailable, fail closed: retaining a page
+  // is safe, while closing a live composer loses a review request.
+  if (result.error || result.status === null) {
+    return true;
+  }
+  return result.status !== 0;
 }
 
 async function collapseParkPages(browserContext, parkCandidates) {

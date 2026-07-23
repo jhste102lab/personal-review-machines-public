@@ -38,6 +38,9 @@ class Config:
     job_max_attempts: int = 4
     job_retry_delay_seconds: int = 60
     job_start_interval_seconds: int = 15
+    chatgpt_success_gap_min_seconds: int = 45
+    chatgpt_success_gap_max_seconds: int = 75
+    chatgpt_pre_send_retry_delays_seconds: tuple[int, ...] = (90, 150, 300)
 
     def allowed_associations_for(self, repo: str) -> frozenset[str]:
         return self.repository_author_associations.get(repo.lower(), self.allowed_author_associations)
@@ -58,6 +61,20 @@ def load_config(path: str | Path) -> Config:
         str(repo).lower(): _load_association_set(associations)
         for repo, associations in raw.get("repository_author_associations", {}).items()
     }
+    chatgpt_success_gap_min_seconds = _load_non_negative_int(
+        raw.get("chatgpt_success_gap_min_seconds", 45),
+        "chatgpt_success_gap_min_seconds",
+    )
+    chatgpt_success_gap_max_seconds = _load_non_negative_int(
+        raw.get("chatgpt_success_gap_max_seconds", 75),
+        "chatgpt_success_gap_max_seconds",
+    )
+    if chatgpt_success_gap_max_seconds < chatgpt_success_gap_min_seconds:
+        raise ValueError("chatgpt_success_gap_max_seconds must be >= chatgpt_success_gap_min_seconds")
+    chatgpt_pre_send_retry_delays_seconds = _load_non_negative_int_tuple(
+        raw.get("chatgpt_pre_send_retry_delays_seconds", [90, 150, 300]),
+        "chatgpt_pre_send_retry_delays_seconds",
+    )
 
     return Config(
         webhook_secret=secret,
@@ -80,6 +97,9 @@ def load_config(path: str | Path) -> Config:
         job_max_attempts=int(raw.get("job_max_attempts", 4)),
         job_retry_delay_seconds=int(raw.get("job_retry_delay_seconds", 60)),
         job_start_interval_seconds=max(1, int(raw.get("job_start_interval_seconds", 15))),
+        chatgpt_success_gap_min_seconds=chatgpt_success_gap_min_seconds,
+        chatgpt_success_gap_max_seconds=chatgpt_success_gap_max_seconds,
+        chatgpt_pre_send_retry_delays_seconds=chatgpt_pre_send_retry_delays_seconds,
     )
 
 
@@ -105,3 +125,22 @@ def _load_command(value: object, field_name: str) -> tuple[str, ...]:
     if not parts:
         raise ValueError(f"{field_name} must contain at least one argument")
     return parts
+
+
+def _load_non_negative_int(value: object, field_name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be >= 0")
+    return parsed
+
+
+def _load_non_negative_int_tuple(value: object, field_name: str) -> tuple[int, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list")
+    values = tuple(_load_non_negative_int(item, field_name) for item in value)
+    if not values:
+        raise ValueError(f"{field_name} must contain at least one delay")
+    return values
