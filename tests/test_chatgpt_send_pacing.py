@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from server.app import ChatGPTSendGate, _retry_delay_seconds
 from server.config import Config, load_config
-from server.review_runner import ReviewOutcome
+from server.review_runner import ReviewOutcome, run_review
 from server.store import ReviewJob, ReviewStore
 
 
@@ -35,6 +37,30 @@ class MutableClock:
     def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds)
         self.now += seconds
+
+
+class RecordingSendGate:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    @contextmanager
+    def wait_for_turn(self):
+        self.events.append("gate_enter")
+        try:
+            yield
+        finally:
+            self.events.append("gate_exit")
+
+    def defer_after_success(self) -> float:
+        self.events.append("session_created")
+        return 60.0
+
+    def defer_after_pre_send_failure(self, delay_seconds: float) -> None:
+        self.events.append(f"pre_send_failure:{delay_seconds}")
+
+    def defer_after_delivery_uncertain(self) -> float:
+        self.events.append("delivery_uncertain")
+        return 60.0
 
 
 class ChatGPTSendPacingTests(unittest.TestCase):
@@ -88,6 +114,41 @@ class ChatGPTSendPacingTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "chatgpt_success_gap_max_seconds"):
                 load_config(path)
+
+    def test_checkout_completes_before_chatgpt_send_lane_is_acquired(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            events: list[str] = []
+            config = make_config(work_dir=Path(temp_dir) / "work")
+            event = {
+                "repository": {"full_name": "owner/repo"},
+                "issue": {"number": 1},
+                "comment": {"id": 2},
+            }
+
+            def checkout(_: str, __: int, checkout_dir: Path, *, reuse_existing: bool = False) -> None:
+                events.append("checkout")
+                checkout_dir.mkdir(parents=True)
+
+            def run_agent(**_: object) -> int:
+                events.append("agent")
+                return 0
+
+            with (
+                patch("server.review_runner._checkout_pr", side_effect=checkout),
+                patch("server.review_runner._run_text", return_value="deadbeef\n"),
+                patch("server.review_runner._run_agent_with_watchdog", side_effect=run_agent),
+            ):
+                outcome = run_review(
+                    config,
+                    event,
+                    "chatgpt_high",
+                    "review",
+                    chatgpt_send_gate=RecordingSendGate(events),  # type: ignore[arg-type]
+                    chatgpt_pre_send_retry_delay_seconds=90,
+                )
+
+            self.assertTrue(outcome.success)
+            self.assertEqual(events, ["checkout", "gate_enter", "agent", "session_created", "gate_exit"])
 
 
 if __name__ == "__main__":

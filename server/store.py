@@ -156,22 +156,6 @@ class ReviewStore:
             ).fetchall()
         return [(self._row_to_job(row[:6]), max(0.0, float(row[6]) - now)) for row in rows]
 
-    def queued_job_engine(self, repository: str, comment_id: int) -> str | None:
-        now = time.time()
-        with self._connect() as db:
-            row = db.execute(
-                """
-                SELECT engine
-                FROM review_jobs
-                WHERE repository = ?
-                  AND comment_id = ?
-                  AND status = 'queued'
-                  AND next_run_at <= ?
-                """,
-                (repository.lower(), int(comment_id), now),
-            ).fetchone()
-        return str(row[0]) if row is not None else None
-
     def start_job(self, repository: str, comment_id: int) -> ReviewJob | None:
         now = time.time()
         with self._connect() as db:

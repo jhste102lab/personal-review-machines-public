@@ -16,9 +16,13 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .config import Config
+
+if TYPE_CHECKING:
+    from .app import ChatGPTSendGate
 
 LOG = logging.getLogger("personal-review-machines")
 
@@ -180,6 +184,8 @@ def run_review(
     instruction: str,
     *,
     post_failure: bool = False,
+    chatgpt_send_gate: ChatGPTSendGate | None = None,
+    chatgpt_pre_send_retry_delay_seconds: int = 0,
 ) -> ReviewOutcome:
     repo = event["repository"]["full_name"]
     pr_number = int(event["issue"]["number"])
@@ -219,8 +225,43 @@ def run_review(
                 ),
                 encoding="utf-8",
             )
-            # ChatGPT jobs finish when the browser confirms a persisted chat session.
-            # GitHub review publication is intentionally not part of this job.
+            if engine in CHATGPT_ENGINES:
+                if chatgpt_send_gate is None:
+                    raise RuntimeError("ChatGPT review was started without a send gate")
+                # Checkout and prompt construction above can run in parallel. Only
+                # the browser interaction is serialized across same-account slots.
+                with chatgpt_send_gate.wait_for_turn():
+                    try:
+                        agent_started = True
+                        exit_code = _run_agent_with_watchdog(
+                            config=config,
+                            engine=engine,
+                            repo=repo,
+                            pr_number=pr_number,
+                            marker=marker,
+                            prompt_path=prompt_path,
+                            checkout_dir=checkout_dir,
+                            review_dir=review_dir,
+                            log_path=log_path,
+                            run_id=run_id,
+                            session_title=session_title,
+                        )
+                    except Exception:
+                        # A browser-side exception can occur after the click. Keep
+                        # the current no-duplicate policy and still pace the next
+                        # send as though delivery may have happened.
+                        chatgpt_send_gate.defer_after_delivery_uncertain()
+                        raise
+                    return _chatgpt_outcome(
+                        exit_code=exit_code,
+                        log_path=log_path,
+                        repo=repo,
+                        pr_number=pr_number,
+                        comment_id=comment_id,
+                        chatgpt_send_gate=chatgpt_send_gate,
+                        pre_send_retry_delay_seconds=chatgpt_pre_send_retry_delay_seconds,
+                    )
+
             agent_started = True
             exit_code = _run_agent_with_watchdog(
                 config=config,
@@ -235,19 +276,6 @@ def run_review(
                 run_id=run_id,
                 session_title=session_title,
             )
-            if engine in CHATGPT_ENGINES:
-                if exit_code == 0:
-                    return ReviewOutcome(True, reason="chatgpt_session_created")
-                _persist_chatgpt_failure_log(log_path, repo, pr_number, comment_id, exit_code)
-                if exit_code == CHATGPT_CONNECT_FAILURE_EXIT_CODE:
-                    return ReviewOutcome(
-                        False,
-                        retryable=True,
-                        reason="chatgpt_connection_failed_before_prompt",
-                    )
-                if exit_code == CHATGPT_PRE_SEND_FAILURE_EXIT_CODE:
-                    return ReviewOutcome(False, retryable=True, reason="chatgpt_prompt_send_failed")
-                return ReviewOutcome(False, reason="chatgpt_delivery_uncertain")
             if _marker_exists(repo, pr_number, marker):
                 return ReviewOutcome(True, reason="marker_posted")
             with log_path.open("a", encoding="utf-8", errors="replace") as log:
@@ -264,6 +292,48 @@ def run_review(
             if engine in CHATGPT_ENGINES and agent_started:
                 return ReviewOutcome(False, reason="chatgpt_prompt_send_unknown")
             return ReviewOutcome(False, retryable=True, reason="pre_send_failure")
+
+
+def _chatgpt_outcome(
+    *,
+    exit_code: int,
+    log_path: Path,
+    repo: str,
+    pr_number: int,
+    comment_id: int,
+    chatgpt_send_gate: ChatGPTSendGate,
+    pre_send_retry_delay_seconds: int,
+) -> ReviewOutcome:
+    if exit_code == 0:
+        cooldown_seconds = chatgpt_send_gate.defer_after_success()
+        LOG.info(
+            "ChatGPT chat session sent; next global send is delayed repo=%s comment_id=%s cooldown_seconds=%.1f",
+            repo,
+            comment_id,
+            cooldown_seconds,
+        )
+        return ReviewOutcome(True, reason="chatgpt_session_created")
+
+    _persist_chatgpt_failure_log(log_path, repo, pr_number, comment_id, exit_code)
+    if exit_code == CHATGPT_CONNECT_FAILURE_EXIT_CODE:
+        chatgpt_send_gate.defer_after_pre_send_failure(pre_send_retry_delay_seconds)
+        return ReviewOutcome(
+            False,
+            retryable=True,
+            reason="chatgpt_connection_failed_before_prompt",
+        )
+    if exit_code == CHATGPT_PRE_SEND_FAILURE_EXIT_CODE:
+        chatgpt_send_gate.defer_after_pre_send_failure(pre_send_retry_delay_seconds)
+        return ReviewOutcome(False, retryable=True, reason="chatgpt_prompt_send_failed")
+
+    cooldown_seconds = chatgpt_send_gate.defer_after_delivery_uncertain()
+    LOG.warning(
+        "ChatGPT delivery is uncertain; delaying the next global send repo=%s comment_id=%s cooldown_seconds=%.1f",
+        repo,
+        comment_id,
+        cooldown_seconds,
+    )
+    return ReviewOutcome(False, reason="chatgpt_delivery_uncertain")
 
 
 @contextmanager
