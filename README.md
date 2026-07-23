@@ -105,8 +105,9 @@ cp config.example.json config.json
 웹 전송이 겹치지 않도록 모든 CDP 슬롯을 가로지르는 전역 send lane을 사용합니다. 새 채팅
 세션 전송을 확인하면 즉시 성공/rocket 처리하고, 다음 ChatGPT 전송은
 `chatgpt_success_gap_min_seconds`~`chatgpt_success_gap_max_seconds`(기본 45~75초)
-사이의 임의 간격 뒤에만 시작합니다. 이전 generation 답변은 기다리지 않고 탭에서 병렬로
-계속됩니다. 403·네트워크 변경처럼 prompt 전송 전임이 확실한 실패는
+사이의 임의 간격 뒤에만 시작합니다. PR checkout과 prompt 준비는 send lane 밖에서 병렬로
+끝내고, browser의 새 채팅 열기·전송·세션 확인만 직렬화합니다. 이전 generation 답변은
+기다리지 않고 탭에서 병렬로 계속됩니다. 403·네트워크 변경처럼 prompt 전송 전임이 확실한 실패는
 `chatgpt_pre_send_retry_delays_seconds`(기본 90, 150, 300초)의 전역 cooldown 뒤에
 재시도합니다. 슬롯당 동시 generation 탭 수는 `PRM_MAX_GENERATING_TABS_PER_SLOT`
 (기본 4)로 제한합니다. reaper는 활성 send lease가 있는 슬롯을 건드리지 않으며,

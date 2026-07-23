@@ -277,24 +277,12 @@ def _dispatch_job(
     comment_id: int,
 ) -> None:
     try:
-        engine = store.queued_job_engine(repository, comment_id)
-        if engine is None:
-            LOG.info("skipping job repo=%s comment_id=%s; it is no longer due", repository, comment_id)
-            return
-        if engine in CHATGPT_ENGINES:
-            with chatgpt_send_gate.wait_for_turn():
-                job = store.start_job(repository, comment_id)
-                if job is None:
-                    LOG.info("skipping job repo=%s comment_id=%s; it is no longer due", repository, comment_id)
-                    return
-                _run_job(config, store, launch_gate, chatgpt_send_gate, job)
-            return
-
         job = store.start_job(repository, comment_id)
         if job is None:
             LOG.info("skipping job repo=%s comment_id=%s; it is no longer due", repository, comment_id)
             return
-        launch_gate.wait_for_turn(config.job_start_interval_seconds, config.job_start_interval_seconds)
+        if job.engine not in CHATGPT_ENGINES:
+            launch_gate.wait_for_turn(config.job_start_interval_seconds, config.job_start_interval_seconds)
         _run_job(config, store, launch_gate, chatgpt_send_gate, job)
     except Exception:
         LOG.exception("review dispatch failed repo=%s comment_id=%s", repository, comment_id)
@@ -356,6 +344,12 @@ def _run_job(
             job.engine,
             job.instruction,
             post_failure=False,
+            chatgpt_send_gate=chatgpt_send_gate if job.engine in CHATGPT_ENGINES else None,
+            chatgpt_pre_send_retry_delay_seconds=(
+                _chatgpt_pre_send_retry_delay_seconds(config, job.attempts)
+                if job.engine in CHATGPT_ENGINES
+                else 0
+            ),
         )
     except Exception:
         LOG.exception("review job crashed repo=%s comment_id=%s", job.repository, job.comment_id)
@@ -374,33 +368,13 @@ def _run_job(
             "marker_posted",
             "marker_already_posted",
         }:
-            cooldown_seconds = chatgpt_send_gate.defer_after_success()
             _add_comment_reaction(job.repository, job.comment_id, "rocket")
-            LOG.info(
-                "ChatGPT chat session sent; next global send is delayed repo=%s comment_id=%s cooldown_seconds=%.1f",
-                job.repository,
-                job.comment_id,
-                cooldown_seconds,
-            )
         LOG.info("finished review job repo=%s comment_id=%s", job.repository, job.comment_id)
         return
 
     message = outcome.reason or "review marker was not posted"
-    retry_delay_seconds: int | None = None
-    if job.engine in CHATGPT_ENGINES:
-        if outcome.reason in CHATGPT_PRE_SEND_RETRY_REASONS:
-            retry_delay_seconds = _retry_delay_seconds(config, job, outcome)
-            chatgpt_send_gate.defer_after_pre_send_failure(retry_delay_seconds)
-        else:
-            cooldown_seconds = chatgpt_send_gate.defer_after_delivery_uncertain()
-            LOG.warning(
-                "ChatGPT delivery is uncertain; delaying the next global send repo=%s comment_id=%s cooldown_seconds=%.1f",
-                job.repository,
-                job.comment_id,
-                cooldown_seconds,
-            )
     if outcome.retryable and job.attempts < config.job_max_attempts:
-        delay_seconds = retry_delay_seconds if retry_delay_seconds is not None else _retry_delay_seconds(config, job, outcome)
+        delay_seconds = _retry_delay_seconds(config, job, outcome)
         store.retry_job(job.repository, job.comment_id, delay_seconds, message)
         _schedule_job(
             config,
@@ -440,10 +414,14 @@ def _run_job(
 
 def _retry_delay_seconds(config: Config, job: ReviewJob, outcome: ReviewOutcome) -> int:
     if job.engine in CHATGPT_ENGINES and outcome.reason in CHATGPT_PRE_SEND_RETRY_REASONS:
-        delays = config.chatgpt_pre_send_retry_delays_seconds
-        index = min(max(0, job.attempts - 1), len(delays) - 1)
-        return delays[index]
+        return _chatgpt_pre_send_retry_delay_seconds(config, job.attempts)
     return max(0, config.job_retry_delay_seconds) * (2 ** max(0, job.attempts - 1))
+
+
+def _chatgpt_pre_send_retry_delay_seconds(config: Config, attempts: int) -> int:
+    delays = config.chatgpt_pre_send_retry_delays_seconds
+    index = min(max(0, attempts - 1), len(delays) - 1)
+    return delays[index]
 
 
 def main() -> None:
