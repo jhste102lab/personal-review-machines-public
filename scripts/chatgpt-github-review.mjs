@@ -10,8 +10,6 @@ const cdpUrl = args.cdp || process.env.PRM_CDP_URL || `http://127.0.0.1:${proces
 const modelName = args.model || "ChatGPT Pro Extended";
 const reasoningLevel = args["reasoning-level"] || "Pro";
 const sessionConfirmationTimeoutMs = 90_000;
-// Soft hint only; cloak-launch reaper is the source of truth for tab close.
-const tabCloseDelayMs = positiveInt(process.env.PRM_TAB_CLOSE_DELAY_MS, 30 * 60 * 1000);
 // Hard cap on non-park pages in this browser while a new review tab is opened.
 const maxGeneratingTabs = positiveInt(process.env.PRM_MAX_GENERATING_TABS_PER_SLOT, 4);
 const generatingWaitMs = positiveInt(process.env.PRM_GENERATING_WAIT_MS, 30 * 60 * 1000);
@@ -70,9 +68,8 @@ if (browser) {
       sessionUrl,
       cdpUrl,
     }));
-    // Keep the tab open so server-side generation can finish.
-    // cloak-launch reaper closes after generation settles; this is a backup.
-    await page.evaluate((delay) => setTimeout(() => window.close(), delay), tabCloseDelayMs).catch(() => {});
+    // Keep the tab open only while ChatGPT is generating. The browser reaper
+    // closes it as soon as generation settles.
     process.exit(0);
   } catch (error) {
     // A failure after clicking Send is delivery-uncertain: ChatGPT may keep
@@ -463,7 +460,7 @@ async function sendPromptWithGithub(page, message, level) {
   const textbox = page.locator("#prompt-textarea").first();
   await textbox.waitFor({ timeout: 20_000 });
   await clearComposer(page, textbox);
-  await enableTemporaryChat(page);
+  await disableTemporaryChat(page);
   await attachGithubPlugin(page);
   await selectReasoningLevel(page, level);
   await page.keyboard.press("Escape").catch(() => {});
@@ -479,24 +476,17 @@ async function sendPromptWithGithub(page, message, level) {
   return confirmChatSession(page);
 }
 
-async function enableTemporaryChat(page) {
+async function disableTemporaryChat(page) {
   const enabled = page.getByRole("button", {
     name: /임시 채팅 끄기|turn off temporary chat/i,
   }).last();
-  if (await enabled.count()) {
+  if (!(await enabled.count())) {
     return;
   }
-
-  const disabled = page.getByRole("button", {
+  await enabled.click({ timeout: 5000 });
+  await page.getByRole("button", {
     name: /임시 채팅 켜기|turn on temporary chat|enable temporary chat/i,
-  }).last();
-  if (!(await disabled.count())) {
-    logPhase("temporary_chat_controls_missing");
-    // Non-fatal: continue without temporary chat if UI changed.
-    return;
-  }
-  await disabled.click({ timeout: 5000 });
-  await enabled.waitFor({ timeout: 5000 });
+  }).last().waitFor({ timeout: 5000 }).catch(() => {});
 }
 
 async function confirmChatSession(page) {

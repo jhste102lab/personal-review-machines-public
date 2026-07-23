@@ -85,6 +85,11 @@ scripts/chatgpt-browser-start
 scripts/chatgpt-browser-status
 ```
 
+`PRM_CHATGPT_SLOT_LOCK_DIR`를 기본값과 다르게 설정했다면 webhook daemon과
+`personal-review-machines-chatgpt-browser.service`에 반드시 같은 값을 설정합니다.
+두 service가 다른 lock directory를 보면 supervisor가 전송 중인 browser를 idle로 오인해
+종료할 수 있습니다.
+
 처음 한 번은 VNC/noVNC로 접속해서 ChatGPT 로그인과 GitHub 연동을 직접 완료해야 합니다.
 기본 포트는 localhost 바인딩 기준 VNC `5901`, noVNC `6080`입니다.
 

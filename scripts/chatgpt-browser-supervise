@@ -3,13 +3,16 @@ set -euo pipefail
 
 INTERVAL_SECONDS="${PRM_BROWSER_SUPERVISE_INTERVAL_SECONDS:-30}"
 GITHUB_APPROVE_INTERVAL_SECONDS="${PRM_GITHUB_APPROVE_INTERVAL_SECONDS:-30}"
-# After all slots have only park pages for this long, stop chromium to free CPU.
-# Jobs call chatgpt-browser-start via _ensure_chatgpt_browser_ready before send.
+# After all slots have only park pages for this long, stop Chromium. The
+# default of 900 keeps an authenticated browser warm between review retries;
+# a negative value disables idle stopping. Jobs call chatgpt-browser-start
+# before sending.
 IDLE_STOP_SECONDS="${PRM_BROWSER_IDLE_STOP_SECONDS:-900}"
 CDP_PORT="${PRM_CDP_PORT:-9222}"
 EXTRA_CDP_PORTS="${EXTRA_CDP_PORTS:-}"
 LOG_PREFIX="chatgpt-browser-supervise"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SLOT_LOCK_DIR="${PRM_CHATGPT_SLOT_LOCK_DIR:-${TMPDIR:-/tmp}/prm-chatgpt-slots}"
 last_github_approve_epoch=0
 idle_since_epoch=0
 idle_stopped=0
@@ -21,6 +24,20 @@ cdp_ports() {
       printf '%s\n' "$port"
     fi
   done
+}
+
+# A review runner holds its slot lock from browser start until the prompt has
+# been submitted. Never drain an otherwise parked browser during that window.
+has_active_send_lease() {
+  local port lock_path
+  for port in $(cdp_ports); do
+    lock_path="${SLOT_LOCK_DIR}/127.0.0.1-${port}.lock"
+    [ -e "${lock_path}" ] || continue
+    if ! flock -n "${lock_path}" -c true; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 browser_healthy() {
@@ -85,11 +102,12 @@ while true; do
       fi
     fi
 
-    if [ "${IDLE_STOP_SECONDS}" -gt 0 ] && all_slots_idle; then
+    if [ "${IDLE_STOP_SECONDS}" -ge 0 ] && all_slots_idle && ! has_active_send_lease; then
       now_epoch="$(date +%s)"
       if [ "${idle_since_epoch}" -eq 0 ]; then
         idle_since_epoch="${now_epoch}"
-      elif [ "$((now_epoch - idle_since_epoch))" -ge "${IDLE_STOP_SECONDS}" ]; then
+      fi
+      if [ "$((now_epoch - idle_since_epoch))" -ge "${IDLE_STOP_SECONDS}" ]; then
         echo "${LOG_PREFIX}: idle ${IDLE_STOP_SECONDS}s with only park pages; stopping browser helpers"
         "${SCRIPT_DIR}/chatgpt-browser-stop" || true
         idle_stopped=1
@@ -99,16 +117,18 @@ while true; do
       idle_since_epoch=0
     fi
   else
-    # When we intentionally drained idle browsers, stay down until a job
-    # calls chatgpt-browser-start (or an operator starts helpers).
-    if [ "${idle_stopped}" -eq 1 ]; then
-      idle_since_epoch=0
-    else
-      echo "${LOG_PREFIX}: CDP is unhealthy; restarting browser helpers"
-      "${SCRIPT_DIR}/chatgpt-browser-stop" || true
+    # Keep Chromium demand-driven: a review job starts it. A healthy leased
+    # slot may coexist with another slot that is still warming up, so never
+    # tear down every browser during an active send just to recover that slot.
+    if has_active_send_lease; then
+      echo "${LOG_PREFIX}: CDP is unhealthy during an active send; starting missing browser helpers"
       if ! "${SCRIPT_DIR}/chatgpt-browser-start"; then
         echo "${LOG_PREFIX}: chatgpt-browser-start failed" >&2
       fi
+      idle_stopped=0
+    else
+      idle_since_epoch=0
+      idle_stopped=1
     fi
   fi
   sleep "${INTERVAL_SECONDS}"

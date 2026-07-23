@@ -20,10 +20,10 @@ const startUrl = process.env.PRM_BROWSER_START_URL || parkUrl;
 const reapIntervalMs = positiveInt(process.env.PRM_PARK_INTERVAL_MS, 30_000);
 // Hard upper bound for any leftover ChatGPT tab (conversation or otherwise).
 const tabMaxAgeMs = positiveInt(process.env.PRM_TAB_MAX_AGE_MS, 35 * 60 * 1000);
-// After generation UI disappears, close the conversation after this grace.
-const generationDoneCloseMs = positiveInt(process.env.PRM_GENERATION_DONE_CLOSE_MS, 5 * 60 * 1000);
-// Root chatgpt.com pages with no generation close after this much idle time.
-const rootIdleCloseMs = positiveInt(process.env.PRM_ROOT_IDLE_PARK_MS, 90_000);
+// Close non-generating tabs on the first reap by default. A positive value
+// retains the old grace period when an operator explicitly needs one.
+const generationDoneCloseMs = nonNegativeInt(process.env.PRM_GENERATION_DONE_CLOSE_MS, 0);
+const rootIdleCloseMs = nonNegativeInt(process.env.PRM_ROOT_IDLE_PARK_MS, 0);
 
 if (!userDataDir) {
   throw new Error("PRM_BROWSER_PROFILE_DIR is required");
@@ -274,6 +274,14 @@ function clipUrl(url) {
 function positiveInt(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) {
+    return fallback;
+  }
+  return Math.floor(n);
+}
+
+function nonNegativeInt(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
     return fallback;
   }
   return Math.floor(n);
