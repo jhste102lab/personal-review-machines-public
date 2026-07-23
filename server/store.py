@@ -57,6 +57,15 @@ class ReviewStore:
                 )
                 """
             )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chatgpt_send_gate (
+                    scope TEXT PRIMARY KEY,
+                    next_send_at REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
     def claim_comment(self, repository: str, comment_id: int, engine: str) -> bool:
         try:
@@ -147,6 +156,22 @@ class ReviewStore:
             ).fetchall()
         return [(self._row_to_job(row[:6]), max(0.0, float(row[6]) - now)) for row in rows]
 
+    def queued_job_engine(self, repository: str, comment_id: int) -> str | None:
+        now = time.time()
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT engine
+                FROM review_jobs
+                WHERE repository = ?
+                  AND comment_id = ?
+                  AND status = 'queued'
+                  AND next_run_at <= ?
+                """,
+                (repository.lower(), int(comment_id), now),
+            ).fetchone()
+        return str(row[0]) if row is not None else None
+
     def start_job(self, repository: str, comment_id: int) -> ReviewJob | None:
         now = time.time()
         with self._connect() as db:
@@ -228,4 +253,25 @@ class ReviewStore:
                   AND comment_id = ?
                 """,
                 (error[:1000], repository.lower(), comment_id),
+            )
+
+    def chatgpt_next_send_at(self, scope: str = "default") -> float:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT next_send_at FROM chatgpt_send_gate WHERE scope = ?",
+                (scope,),
+            ).fetchone()
+        return float(row[0]) if row is not None else 0.0
+
+    def defer_chatgpt_send_until(self, next_send_at: float, scope: str = "default") -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT INTO chatgpt_send_gate(scope, next_send_at)
+                VALUES (?, ?)
+                ON CONFLICT(scope) DO UPDATE SET
+                    next_send_at = MAX(chatgpt_send_gate.next_send_at, excluded.next_send_at),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (scope, float(next_send_at)),
             )

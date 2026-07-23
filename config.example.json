@@ -28,5 +28,8 @@
   "poll_seconds": 10,
   "job_max_attempts": 4,
   "job_retry_delay_seconds": 60,
-  "job_start_interval_seconds": 15
+  "job_start_interval_seconds": 15,
+  "chatgpt_success_gap_min_seconds": 45,
+  "chatgpt_success_gap_max_seconds": 75,
+  "chatgpt_pre_send_retry_delays_seconds": [90, 150, 300]
 }

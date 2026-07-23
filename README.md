@@ -93,20 +93,28 @@ cp config.example.json config.json
   "bind_port": 18080,
   "job_max_attempts": 4,
   "job_retry_delay_seconds": 60,
-  "job_start_interval_seconds": 15
+  "job_start_interval_seconds": 15,
+  "chatgpt_success_gap_min_seconds": 45,
+  "chatgpt_success_gap_max_seconds": 75,
+  "chatgpt_pre_send_retry_delays_seconds": [90, 150, 300]
 }
 ```
 
 요청은 이전 리뷰 완료를 기다리지 않고 각각 독립적으로 실행합니다. 단, 외부 모델에
-프로세스를 시작하는 순간만 기본 15초 간격으로 분산합니다. ChatGPT 작업은 CDP
-브라우저 슬롯 lease로 프롬프트 전송만 직렬화하고, 전송 후 generation 탭은 슬롯 밖에서
-병렬로 유지합니다. 슬롯당 동시 generation 탭 수는 `PRM_MAX_GENERATING_TABS_PER_SLOT`
-(기본 4)로 제한합니다. generation이 끝난 탭은 다음 reaper pass에서 기본 즉시
-닫히며(`PRM_GENERATION_DONE_CLOSE_MS`로 유예 가능), park page는 슬롯당 1개만
-남깁니다. 모든 슬롯이 park-only 상태로 `PRM_BROWSER_IDLE_STOP_SECONDS`(기본 900)
-동안 유지되면 browser helper를 중지하고, 다음 ChatGPT job이
-`chatgpt-browser-start`로 다시 기동합니다. ChatGPT의 GitHub 댓글·리뷰 게시 여부는
-이 서비스가 확인하지 않습니다.
+프로세스를 시작하는 순간만 기본 15초 간격으로 분산합니다. ChatGPT 작업은 같은 계정의
+웹 전송이 겹치지 않도록 모든 CDP 슬롯을 가로지르는 전역 send lane을 사용합니다. 새 채팅
+세션 전송을 확인하면 즉시 성공/rocket 처리하고, 다음 ChatGPT 전송은
+`chatgpt_success_gap_min_seconds`~`chatgpt_success_gap_max_seconds`(기본 45~75초)
+사이의 임의 간격 뒤에만 시작합니다. 이전 generation 답변은 기다리지 않고 탭에서 병렬로
+계속됩니다. 403·네트워크 변경처럼 prompt 전송 전임이 확실한 실패는
+`chatgpt_pre_send_retry_delays_seconds`(기본 90, 150, 300초)의 전역 cooldown 뒤에
+재시도합니다. 슬롯당 동시 generation 탭 수는 `PRM_MAX_GENERATING_TABS_PER_SLOT`
+(기본 4)로 제한합니다. reaper는 활성 send lease가 있는 슬롯을 건드리지 않으며,
+generation이 끝난 탭은 다음 reaper pass에서 기본 즉시 닫힙니다
+(`PRM_GENERATION_DONE_CLOSE_MS`로 유예 가능). park page는 슬롯당 1개만 남깁니다.
+모든 슬롯이 park-only 상태로 `PRM_BROWSER_IDLE_STOP_SECONDS`(기본 900) 동안
+유지되면 browser helper를 중지하고, 다음 ChatGPT job이 `chatgpt-browser-start`로 다시
+기동합니다. ChatGPT의 GitHub 댓글·리뷰 게시 여부는 이 서비스가 확인하지 않습니다.
 
 3. 대상 repo의 webhook을 추가합니다.
 
